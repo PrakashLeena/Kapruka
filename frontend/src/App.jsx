@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import ChatMessage from "./components/ChatMessage.jsx";
 import TypingIndicator from "./components/TypingIndicator.jsx";
-
+// Resolve the backend URL based on environment variables and active environment
 const BACKEND_URL = (
   import.meta.env.VITE_BACKEND_URL || (import.meta.env.DEV ? "http://localhost:3000" : "")
+
 ).replace(/\/$/, "");
 
 
