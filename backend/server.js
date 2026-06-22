@@ -9,7 +9,8 @@ import { SYSTEM_PROMPT } from "./systemPrompt.js";
 const PORT = process.env.PORT || 3000;
 const MODEL = process.env.CLAUDE_MODEL || "z-ai/glm-5.1";
 const KAPRUKA_MCP_URL = process.env.KAPRUKA_MCP_URL || "https://mcp.kapruka.com/mcp";
-const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "http://localhost:5173";
+const ALLOWED_ORIGIN = (process.env.ALLOWED_ORIGIN || "http://localhost:5173").replace(/\/$/, "");
+
 
 if (!process.env.NVIDIA_API_KEY) {
   console.warn("WARNING: NVIDIA_API_KEY is not set in the environment variables.");
@@ -234,7 +235,9 @@ function processToolResponse(toolName, responseData, products, orderRef) {
   }
 }
 
+app.get("/", (_req, res) => res.send("Kapruka Agent Backend is running successfully!"));
 app.get("/health", (_req, res) => res.json({ ok: true }));
+
 
 app.post("/chat", async (req, res) => {
   if (!process.env.NVIDIA_API_KEY) {
