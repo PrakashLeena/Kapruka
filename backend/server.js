@@ -259,6 +259,11 @@ app.post("/chat", async (req, res) => {
 
   try {
     const openAiTools = await getOpenAiTools();
+    if (openAiTools.length === 0) {
+      history.pop();
+      return res.status(503).json({ error: "The shopping catalog is currently offline. Please try again shortly." });
+    }
+
     let currentMessages = [
       { role: "system", content: SYSTEM_PROMPT },
       ...history
@@ -272,9 +277,10 @@ app.post("/chat", async (req, res) => {
       const requestBody = {
         model: MODEL,
         messages: currentMessages,
-        temperature: 1,
+        temperature: 0.2,
         top_p: 1,
       };
+
 
       if (openAiTools.length > 0) {
         requestBody.tools = openAiTools;
