@@ -12,8 +12,7 @@ const KAPRUKA_MCP_URL = process.env.KAPRUKA_MCP_URL || "https://mcp.kapruka.com/
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "http://localhost:5173";
 
 if (!process.env.NVIDIA_API_KEY) {
-  console.error("Missing NVIDIA_API_KEY in .env");
-  process.exit(1);
+  console.warn("WARNING: NVIDIA_API_KEY is not set in the environment variables.");
 }
 
 const app = express();
@@ -238,7 +237,12 @@ function processToolResponse(toolName, responseData, products, orderRef) {
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
 app.post("/chat", async (req, res) => {
+  if (!process.env.NVIDIA_API_KEY) {
+    return res.status(500).json({ error: "NVIDIA_API_KEY is not configured on the server." });
+  }
+
   const { sessionId, message } = req.body ?? {};
+
 
   if (!sessionId || typeof sessionId !== "string") {
     return res.status(400).json({ error: "Missing sessionId" });

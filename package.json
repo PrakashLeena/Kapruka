@@ -1,0 +1,12 @@
+{
+  "name": "kapruka-agent-root",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace=frontend"
+  }
+}
