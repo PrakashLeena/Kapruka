@@ -1,0 +1,62 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-cream-50 text-charcoal font-sans;
+}
+
+/* Thin, warm scrollbar instead of the default browser one */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: theme("colors.terracotta.light") transparent;
+}
+*::-webkit-scrollbar {
+  width: 6px;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: theme("colors.terracotta.light");
+  border-radius: 999px;
+}
+
+/* Signature element: a small rotated price tag badge used on every product
+   card. The notch + dashed line is what makes it read as a "tag" rather
+   than a plain label. */
+.price-tag {
+  position: relative;
+  transform: rotate(-3deg);
+}
+.price-tag::before {
+  content: "";
+  position: absolute;
+  left: -7px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: theme("colors.cream.50");
+  border: 1.5px solid theme("colors.gold");
+}
+
+@keyframes typing-bounce {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.5;
+  }
+  30% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+.typing-dot {
+  animation: typing-bounce 1.1s ease-in-out infinite;
+}
