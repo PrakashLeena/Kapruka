@@ -17,7 +17,17 @@ if (!process.env.NVIDIA_API_KEY) {
 }
 
 const app = express();
-app.use(cors({ origin: ALLOWED_ORIGIN }));
+app.use(cors({
+  origin: (origin, callback) => {
+    // Automatically allow localhost in development, or the configured ALLOWED_ORIGIN, or requests with no origin
+    if (!origin || origin.startsWith("http://localhost:") || origin === ALLOWED_ORIGIN) {
+      callback(null, true);
+    } else {
+      callback(null, false);
+    }
+  }
+}));
+
 app.use(express.json({ limit: "2mb" }));
 
 // In-memory session store: sessionId -> array of message objects.
