@@ -43,8 +43,10 @@ export default function App() {
         body: JSON.stringify({ sessionId: sessionId.current, message: trimmed }),
       });
 
-      if (!res.ok) throw new Error("Request failed");
       const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || data.detail || `Request failed with status ${res.status}`);
+      }
 
       setMessages((prev) => [
         ...prev,
@@ -61,7 +63,7 @@ export default function App() {
         ...prev,
         {
           role: "assistant",
-          text: "Hmm, something went wrong on my end. Mind trying that again?",
+          text: err.message || "Hmm, something went wrong on my end. Mind trying that again?",
           products: [],
           order: null,
         },

@@ -59,134 +59,158 @@ function trimHistory(history) {
   }
 }
 
-// Custom MCP SSE/Streamable HTTP client connection function using native http/https
-function callMcp(baseUrl, method, params = {}) {
+function mcpPost(baseUrl, payload, sessionId) {
   return new Promise((resolve, reject) => {
     const urlObj = new URL(baseUrl);
     const lib = baseUrl.startsWith("https:") ? https : http;
+    const postData = JSON.stringify(payload);
+    const headers = {
+      "Accept": "application/json, text/event-stream",
+      "Content-Type": "application/json",
+      "Content-Length": Buffer.byteLength(postData),
+      "User-Agent": "KaprukaAgentBackend/1.0"
+    };
+
+    if (sessionId) {
+      headers["Mcp-Session-Id"] = sessionId;
+    }
 
     const options = {
       hostname: urlObj.hostname,
       port: urlObj.port || (urlObj.protocol === "https:" ? 443 : 80),
       path: urlObj.pathname + urlObj.search,
-      method: "GET",
-      headers: {
-        "Accept": "text/event-stream",
-        "Cache-Control": "no-cache",
-        "Connection": "keep-alive",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+      method: "POST",
+      headers
+    };
+
+    const finish = (res, body) => {
+      let resultBody = body;
+      const dataLine = body
+        .split(/\r?\n/)
+        .find(line => line.startsWith("data:"));
+
+      if (dataLine) {
+        resultBody = dataLine.slice(5).trim();
       }
+
+      let json = null;
+      try {
+        json = resultBody ? JSON.parse(resultBody) : null;
+      } catch {
+        // keep json null and let caller inspect raw body
+      }
+
+      resolve({
+        status: res.statusCode,
+        ok: res.statusCode >= 200 && res.statusCode < 300,
+        headers: res.headers,
+        body,
+        json
+      });
     };
 
     const req = lib.request(options, (res) => {
-      if (res.statusCode !== 200) {
-        let body = "";
-        res.on("data", chunk => body += chunk);
-        res.on("end", () => {
-          reject(new Error(`Failed to connect to SSE. Status: ${res.statusCode}, Body: ${body}`));
-        });
-        return;
-      }
-
-      let buffer = "";
-      let postUrl = null;
-      let result = null;
-      const requestId = Math.floor(Math.random() * 1000000);
-      let sentPost = false;
-
-      let currentEvent = null;
-      let currentData = "";
-
+      let body = "";
+      let resolved = false;
       res.setEncoding("utf8");
-      res.on("data", (chunk) => {
-        buffer += chunk;
-        const lines = buffer.split(/\r?\n/);
-        buffer = lines.pop();
 
-        for (const line of lines) {
-          if (line.trim() === "") {
-            const eventType = currentEvent || "message";
-            if (eventType === "endpoint" && currentData) {
-              postUrl = new URL(currentData.trim(), baseUrl).toString();
-              if (!sentPost) {
-                sentPost = true;
+      const finishOnce = () => {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(timeout);
+        finish(res, body);
+        req.destroy();
+      };
 
-                const postUrlObj = new URL(postUrl);
-                const postLib = postUrl.startsWith("https:") ? https : http;
-                const postData = JSON.stringify({
-                  jsonrpc: "2.0",
-                  id: requestId,
-                  method,
-                  params
-                });
+      const timeout = setTimeout(finishOnce, 15000);
 
-                const postOptions = {
-                  hostname: postUrlObj.hostname,
-                  port: postUrlObj.port || (postUrlObj.protocol === "https:" ? 443 : 80),
-                  path: postUrlObj.pathname + postUrlObj.search,
-                  method: "POST",
-                  headers: {
-                    "Content-Type": "application/json",
-                    "Content-Length": Buffer.byteLength(postData),
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                  }
-                };
-
-                const postReq = postLib.request(postOptions, (postRes) => {
-                  postRes.on("data", () => {}); // consume response
-                });
-                postReq.on("error", (err) => {
-                  console.error("POST request error in MCP call:", err.message);
-                });
-                postReq.write(postData);
-                postReq.end();
-              }
-            } else if (eventType === "message" && currentData) {
-              try {
-                const parsed = JSON.parse(currentData.trim());
-                if (parsed.id === requestId) {
-                  result = parsed.result;
-                  req.destroy(); // close the SSE request
-                  resolve(result);
-                  return;
-                }
-              } catch (e) {
-                // Ignore
-              }
-            }
-            currentEvent = null;
-            currentData = "";
-          } else if (line.startsWith("event:")) {
-            currentEvent = line.slice(6).trim();
-          } else if (line.startsWith("data:")) {
-            currentData += (currentData ? "\n" : "") + line.slice(5).trim();
-          }
+      res.on("data", chunk => {
+        body += chunk;
+        if ((res.headers["content-type"] || "").includes("text/event-stream") && body.includes("data:")) {
+          finishOnce();
         }
       });
-
-      res.on("end", () => {
-        if (result === null) {
-          reject(new Error("SSE connection ended without response"));
-        }
-      });
+      res.on("end", finishOnce);
     });
 
-    req.on("error", (err) => {
-      reject(err);
+    req.setTimeout(20000, () => {
+      req.destroy();
+      reject(new Error("MCP request timed out"));
     });
-
+    req.on("error", reject);
+    req.write(postData);
     req.end();
   });
 }
 
+let mcpSessionId = null;
+async function ensureMcpSession() {
+  if (mcpSessionId) return mcpSessionId;
+
+  const init = await mcpPost(KAPRUKA_MCP_URL, {
+    jsonrpc: "2.0",
+    id: 1,
+    method: "initialize",
+    params: {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: {
+        name: "kapruka-agent-backend",
+        version: "1.0.0"
+      }
+    }
+  });
+
+  const sessionId = init.headers["mcp-session-id"];
+  if (!init.ok || !sessionId) {
+    throw new Error(`MCP initialize failed. Status: ${init.status}, Body: ${init.body}`);
+  }
+
+  mcpSessionId = sessionId;
+  await mcpPost(KAPRUKA_MCP_URL, {
+    jsonrpc: "2.0",
+    method: "notifications/initialized"
+  }, mcpSessionId);
+
+  return mcpSessionId;
+}
+
+async function callMcp(baseUrl, method, params = {}) {
+  const sessionId = await ensureMcpSession();
+  const id = Math.floor(Math.random() * 1000000);
+  const response = await mcpPost(baseUrl, {
+    jsonrpc: "2.0",
+    id,
+    method,
+    params
+  }, sessionId);
+
+  if (!response.ok) {
+    if (response.status === 404 || response.status === 400) {
+      mcpSessionId = null;
+    }
+    throw new Error(`MCP ${method} failed. Status: ${response.status}, Body: ${response.body}`);
+  }
+
+  if (response.json?.error) {
+    throw new Error(`MCP ${method} error: ${JSON.stringify(response.json.error)}`);
+  }
+
+  return response.json?.result;
+}
+
 // Dynamically loaded MCP tools
 let mcpTools = [];
+let mcpLoadError = null;
 async function loadMcpTools() {
   try {
     const res = await callMcp(KAPRUKA_MCP_URL, "tools/list");
     mcpTools = res?.tools || [];
+    mcpLoadError = null;
     console.log(`Successfully loaded ${mcpTools.length} tools from Kapruka MCP server:`, mcpTools.map(t => t.name));
   } catch (err) {
+    mcpTools = [];
+    mcpLoadError = err.message;
     console.error("Failed to load MCP tools at startup:", err.message);
   }
 }
@@ -260,7 +284,15 @@ function processToolResponse(toolName, responseData, products, orderRef) {
 }
 
 app.get("/", (_req, res) => res.send("Kapruka Agent Backend is running successfully!"));
-app.get("/health", (_req, res) => res.json({ ok: true }));
+app.get("/health", (_req, res) => res.json({
+  ok: true,
+  mcp: {
+    url: KAPRUKA_MCP_URL,
+    connected: mcpTools.length > 0,
+    toolCount: mcpTools.length,
+    lastError: mcpLoadError,
+  },
+}));
 
 
 app.post("/chat", async (req, res) => {
@@ -285,7 +317,10 @@ app.post("/chat", async (req, res) => {
     const openAiTools = await getOpenAiTools();
     if (openAiTools.length === 0) {
       history.pop();
-      return res.status(503).json({ error: "The shopping catalog is currently offline. Please try again shortly." });
+      return res.status(503).json({
+        error: "The shopping catalog is currently offline. Please restart the backend or check the Kapruka MCP connection.",
+        detail: mcpLoadError,
+      });
     }
 
     let currentMessages = [
@@ -393,4 +428,3 @@ if (!process.env.VERCEL) {
 }
 
 export default app;
-
