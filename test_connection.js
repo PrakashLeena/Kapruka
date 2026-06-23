@@ -1,6 +1,8 @@
 import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
+import https from "https";
+import http from "http";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(__dirname, "backend", ".env") });
@@ -18,22 +20,48 @@ console.log("NVIDIA_API_KEY prefix:", NVIDIA_API_KEY ? NVIDIA_API_KEY.slice(0, 1
 
 async function testMcp() {
   console.log("\n1. Testing Kapruka MCP Server connection...");
-  try {
-    const res = await fetch(KAPRUKA_MCP_URL, {
+  return new Promise((resolve) => {
+    const urlObj = new URL(KAPRUKA_MCP_URL);
+    const lib = KAPRUKA_MCP_URL.startsWith("https:") ? https : http;
+
+    const options = {
+      hostname: urlObj.hostname,
+      port: urlObj.port || (urlObj.protocol === "https:" ? 443 : 80),
+      path: urlObj.pathname + urlObj.search,
+      method: "GET",
       headers: {
         "Accept": "text/event-stream",
-        "User-Agent": "Mozilla/5.0"
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+      }
+    };
+
+    const req = lib.request(options, (res) => {
+      console.log(`- MCP Server Response Status: ${res.statusCode}`);
+      console.log(`- Headers:`, JSON.stringify(res.headers, null, 2));
+
+      if (res.statusCode === 200) {
+        console.log("✓ Success: Kapruka MCP server is reachable.");
+        req.destroy();
+        resolve(true);
+      } else {
+        let body = "";
+        res.on("data", chunk => body += chunk);
+        res.on("end", () => {
+          console.log(`✗ Failure: Kapruka MCP returned status ${res.statusCode}. Body: ${body}`);
+          resolve(false);
+        });
       }
     });
-    console.log(`- MCP Server Response Status: ${res.status}`);
-    if (res.status === 200) {
-      console.log("✓ Success: Kapruka MCP server is reachable.");
-    } else {
-      console.log("✗ Failure: Kapruka MCP returned an unexpected status code.");
-    }
-  } catch (err) {
-    console.error("✗ Failure: Could not reach Kapruka MCP server:", err.message);
-  }
+
+    req.on("error", (err) => {
+      console.error("✗ Failure: Could not reach Kapruka MCP server:", err.message);
+      resolve(false);
+    });
+
+    req.end();
+  });
 }
 
 async function testNvidia() {
