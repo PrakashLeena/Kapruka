@@ -126,8 +126,25 @@ function mcpPost(baseUrl, payload, sessionId) {
 
       res.on("data", chunk => {
         body += chunk;
-        if ((res.headers["content-type"] || "").includes("text/event-stream") && body.includes("data:")) {
-          finishOnce();
+        const contentType = res.headers["content-type"] || "";
+        if (contentType.includes("text/event-stream")) {
+          const dataLine = body.split(/\r?\n/).find(line => line.startsWith("data:"));
+          if (dataLine) {
+            const jsonStr = dataLine.slice(5).trim();
+            try {
+              JSON.parse(jsonStr);
+              finishOnce();
+            } catch (e) {
+              // Incomplete JSON, wait for more chunks
+            }
+          }
+        } else {
+          try {
+            JSON.parse(body);
+            finishOnce();
+          } catch (e) {
+            // Incomplete JSON, wait for more chunks
+          }
         }
       });
       res.on("end", finishOnce);

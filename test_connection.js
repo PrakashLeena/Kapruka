@@ -1,4 +1,4 @@
-﻿import dotenv from "dotenv";
+import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
 import https from "https";
@@ -68,8 +68,24 @@ function mcpPost(payload, sessionId) {
 
       res.on("data", chunk => {
         body += chunk;
-        if (contentType.includes("text/event-stream") && body.includes("data:")) {
-          finishOnce();
+        if (contentType.includes("text/event-stream")) {
+          const dataLine = body.split(/\r?\n/).find(line => line.startsWith("data:"));
+          if (dataLine) {
+            const jsonStr = dataLine.slice(5).trim();
+            try {
+              JSON.parse(jsonStr);
+              finishOnce();
+            } catch (e) {
+              // Incomplete JSON, wait for more chunks
+            }
+          }
+        } else {
+          try {
+            JSON.parse(body);
+            finishOnce();
+          } catch (e) {
+            // Incomplete JSON, wait for more chunks
+          }
         }
       });
       res.on("end", finishOnce);
