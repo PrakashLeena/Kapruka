@@ -1,4 +1,3 @@
-import ProductCarousel from "./ProductCarousel.jsx";
 import OrderCard from "./OrderCard.jsx";
 
 export default function ChatMessage({ message, onAddToCart }) {
@@ -24,9 +23,6 @@ export default function ChatMessage({ message, onAddToCart }) {
           <div className="bg-white border border-cream-200 border-l-[3px] border-l-teal px-4 py-2.5 rounded-2xl rounded-bl-sm text-sm leading-relaxed">
             {message.text}
           </div>
-        )}
-        {message.products?.length > 0 && (
-          <ProductCarousel products={message.products} onAddToCart={onAddToCart} />
         )}
         {message.order && <OrderCard order={message.order} />}
       </div>
