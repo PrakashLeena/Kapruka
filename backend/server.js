@@ -25,10 +25,18 @@ if (!process.env.NVIDIA_API_KEY) {
 const app = express();
 app.use(cors({
   origin: (origin, callback) => {
-    // Automatically allow localhost in development, or the configured ALLOWED_ORIGIN, or requests with no origin
-    if (!origin || origin.startsWith("http://localhost:") || origin === ALLOWED_ORIGIN) {
+    // Automatically allow localhost/127.0.0.1 in development, or the configured ALLOWED_ORIGIN, or requests with no origin
+    if (
+      !origin ||
+      origin.startsWith("http://localhost:") ||
+      origin.startsWith("http://127.0.0.1:") ||
+      origin.startsWith("https://localhost:") ||
+      origin.startsWith("https://127.0.0.1:") ||
+      origin === ALLOWED_ORIGIN
+    ) {
       callback(null, true);
     } else {
+      console.warn(`CORS blocked request from origin: ${origin}. Allowed origin is: ${ALLOWED_ORIGIN}`);
       callback(null, false);
     }
   }
