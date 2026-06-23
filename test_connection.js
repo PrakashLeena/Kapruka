@@ -24,15 +24,25 @@ async function testMcp() {
     const urlObj = new URL(KAPRUKA_MCP_URL);
     const lib = KAPRUKA_MCP_URL.startsWith("https:") ? https : http;
 
+    const sessionId = "test-session-" + Math.random().toString(36).substring(2, 15);
+    console.log(`- Generated Session ID: ${sessionId}`);
+
+    const postData = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/list",
+      params: {}
+    });
+
     const options = {
       hostname: urlObj.hostname,
       port: urlObj.port || (urlObj.protocol === "https:" ? 443 : 80),
       path: urlObj.pathname + urlObj.search,
-      method: "GET",
+      method: "POST",
       headers: {
-        "Accept": "text/event-stream",
-        "Cache-Control": "no-cache",
-        "Connection": "keep-alive",
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(postData),
+        "Mcp-Session-Id": sessionId,
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
       }
     };
@@ -41,18 +51,18 @@ async function testMcp() {
       console.log(`- MCP Server Response Status: ${res.statusCode}`);
       console.log(`- Headers:`, JSON.stringify(res.headers, null, 2));
 
-      if (res.statusCode === 200) {
-        console.log("✓ Success: Kapruka MCP server is reachable.");
-        req.destroy();
-        resolve(true);
-      } else {
-        let body = "";
-        res.on("data", chunk => body += chunk);
-        res.on("end", () => {
-          console.log(`✗ Failure: Kapruka MCP returned status ${res.statusCode}. Body: ${body}`);
+      let body = "";
+      res.on("data", chunk => body += chunk);
+      res.on("end", () => {
+        console.log(`- Body: ${body}`);
+        if (res.statusCode === 200) {
+          console.log("✓ Success: Kapruka MCP server responded successfully to HTTP POST!");
+          resolve(true);
+        } else {
+          console.log("✗ Failure: Kapruka MCP returned error status.");
           resolve(false);
-        });
-      }
+        }
+      });
     });
 
     req.on("error", (err) => {
@@ -60,6 +70,7 @@ async function testMcp() {
       resolve(false);
     });
 
+    req.write(postData);
     req.end();
   });
 }
