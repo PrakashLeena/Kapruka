@@ -2,11 +2,18 @@
   "name": "kapruka-agent-root",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
   "workspaces": [
     "backend",
     "frontend"
   ],
   "scripts": {
-    "build": "npm run build --workspace=frontend"
+    "build": "npm run build --workspace=frontend",
+    "dev": "npm run dev --workspaces --parallel"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2"
   }
 }
