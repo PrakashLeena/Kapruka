@@ -3,8 +3,13 @@ import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-dotenv.config({ path: path.resolve(__dirname, ".env") });
+// Guard: fileURLToPath can throw in some serverless bundlers
+try {
+  const __dirname = path.dirname(fileURLToPath(import.meta.url));
+  dotenv.config({ path: path.resolve(__dirname, ".env") });
+} catch {
+  // Running in a serverless/bundled environment — env vars come from the platform
+}
 
 import express from "express";
 import cors from "cors";
