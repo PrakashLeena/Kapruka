@@ -442,7 +442,10 @@ app.post("/chat", async (req, res) => {
     // Fire parallel background product search immediately (safety net).
     // This resolves while the AI is thinking so the catalog never stays blank
     // when the user describes a situation rather than naming a product.
-    const parallelSearchPromise = parallelProductSearch(message);
+    const parallelSearchPromise = parallelProductSearch(message).catch(err => {
+      console.warn("Parallel search rejected:", err.message);
+      return [];
+    });
 
     // Max 10 sequential tool calls per user interaction loop
     for (let loop = 0; loop < 10; loop++) {
