@@ -2,14 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import ChatMessage from "./components/ChatMessage.jsx";
 import TypingIndicator from "./components/TypingIndicator.jsx";
 import RightPane from "./components/RightPane.jsx";
+import ChatSidebar from "./components/ChatSidebar.jsx";
 
 const BACKEND_URL = (
   import.meta.env.VITE_BACKEND_URL !== undefined
     ? import.meta.env.VITE_BACKEND_URL
     : (import.meta.env.DEV ? "http://localhost:3000" : "")
 ).replace(/\/$/, "");
-
-
 
 const STARTERS = [
   "Apology gift for an upset spouse",
@@ -24,12 +23,86 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [currentProducts, setCurrentProducts] = useState([]);
   const [selectedProduct, setSelectedProduct] = useState(null);
-  const sessionId = useRef(crypto.randomUUID());
+  
+  // Chat sessions state
+  const [activeChatId, setActiveChatId] = useState(crypto.randomUUID());
+  const [chats, setChats] = useState([]);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  
   const scrollRef = useRef(null);
+
+  // Fetch all chat sessions on mount
+  async function fetchChats() {
+    try {
+      const res = await fetch(`${BACKEND_URL}/chats`);
+      if (res.ok) {
+        const data = await res.json();
+        setChats(data);
+      }
+    } catch (err) {
+      console.error("Failed to fetch chat history list:", err);
+    }
+  }
+
+  useEffect(() => {
+    fetchChats();
+  }, []);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, loading]);
+
+  // Load a selected chat session
+  async function selectChat(chatId) {
+    setActiveChatId(chatId);
+    setLoading(true);
+    try {
+      const res = await fetch(`${BACKEND_URL}/chats/${chatId}`);
+      if (!res.ok) throw new Error("Failed to load chat history");
+      const data = await res.json();
+      
+      const formattedMessages = (data.messages || []).map((m) => ({
+        role: m.role,
+        text: m.content || m.text || "",
+        products: [],
+        order: null,
+      }));
+      
+      setMessages(formattedMessages);
+      setCurrentProducts([]);
+      setSelectedProduct(null);
+    } catch (err) {
+      console.error("Error loading chat session:", err);
+      setMessages([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Delete a chat session
+  async function deleteChat(chatId) {
+    try {
+      const res = await fetch(`${BACKEND_URL}/chats/${chatId}`, {
+        method: "DELETE",
+      });
+      if (res.ok) {
+        setChats((prev) => prev.filter((c) => c.id !== chatId));
+        if (chatId === activeChatId) {
+          handleNewChat();
+        }
+      }
+    } catch (err) {
+      console.error("Error deleting chat session:", err);
+    }
+  }
+
+  // Start a new chat
+  function handleNewChat() {
+    setActiveChatId(crypto.randomUUID());
+    setMessages([]);
+    setCurrentProducts([]);
+    setSelectedProduct(null);
+  }
 
   async function sendMessage(text) {
     const trimmed = text.trim();
@@ -43,7 +116,7 @@ export default function App() {
       const res = await fetch(`${BACKEND_URL}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId: sessionId.current, message: trimmed }),
+        body: JSON.stringify({ sessionId: activeChatId, message: trimmed }),
       });
 
       if (!res.ok) throw new Error("Request failed");
@@ -63,6 +136,9 @@ export default function App() {
         setCurrentProducts(data.products);
         setSelectedProduct(null);
       }
+      
+      // Refresh chat sidebar to display updated titles/sessions
+      fetchChats();
     } catch (err) {
       console.error(err);
       setMessages((prev) => [
@@ -87,18 +163,43 @@ export default function App() {
   return (
     <div className="h-screen flex flex-col bg-cream-50 overflow-hidden">
       {/* Header */}
-      <header className="shrink-0 bg-teal text-white px-5 py-4 flex items-center gap-3 shadow-sm">
-        <div className="w-9 h-9 rounded-full bg-terracotta flex items-center justify-center font-display font-semibold">
-          K
-        </div>
-        <div>
-          <h1 className="font-display text-lg leading-tight">Kapu</h1>
-          <p className="text-teal-50/70 text-xs">Your Kapruka shopping companion</p>
+      <header className="shrink-0 bg-teal text-white px-5 py-4 flex items-center justify-between shadow-sm">
+        <div className="flex items-center gap-3">
+          {/* Hamburger Menu Icon for Mobile */}
+          <button
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            className="md:hidden p-1.5 -ml-1 rounded-lg hover:bg-teal-light text-white transition-colors"
+            aria-label="Toggle Sidebar"
+          >
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <line x1="3" y1="12" x2="21" y2="12" />
+              <line x1="3" y1="6" x2="21" y2="6" />
+              <line x1="3" y1="18" x2="21" y2="18" />
+            </svg>
+          </button>
+
+          <div className="w-9 h-9 rounded-full bg-terracotta flex items-center justify-center font-display font-semibold">
+            K
+          </div>
+          <div>
+            <h1 className="font-display text-lg leading-tight">Kapu</h1>
+            <p className="text-teal-50/70 text-xs">Your Kapruka shopping companion</p>
+          </div>
         </div>
       </header>
 
-      {/* Main split layout */}
-      <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
+      {/* Main split layout with Sidebar included */}
+      <div className="flex-1 flex flex-row overflow-hidden relative">
+        <ChatSidebar
+          chats={chats}
+          activeChatId={activeChatId}
+          onSelectChat={selectChat}
+          onNewChat={handleNewChat}
+          onDeleteChat={deleteChat}
+          isOpen={sidebarOpen}
+          onClose={() => setSidebarOpen(false)}
+        />
+
         {/* Left Pane: Chat */}
         <div className="flex-1 flex flex-col min-w-0 h-full border-r border-cream-200">
           {/* Messages */}

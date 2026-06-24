@@ -10,22 +10,98 @@ import express from "express";
 import cors from "cors";
 import https from "https";
 import http from "http";
+import { MongoClient } from "mongodb";
 import { SYSTEM_PROMPT } from "./systemPrompt.js";
 
 const PORT = process.env.PORT || 3000;
 const MODEL = process.env.CLAUDE_MODEL || "z-ai/glm-5.1";
 const KAPRUKA_MCP_URL = process.env.KAPRUKA_MCP_URL || "https://mcp.kapruka.com/mcp";
 const ALLOWED_ORIGIN = (process.env.ALLOWED_ORIGIN || "http://localhost:5173").replace(/\/$/, "");
-
+const MONGODB_URI = process.env.MONGODB_URI;
 
 if (!process.env.NVIDIA_API_KEY) {
   console.warn("WARNING: NVIDIA_API_KEY is not set in the environment variables.");
 }
+if (!MONGODB_URI) {
+  console.warn("WARNING: MONGODB_URI is not set. Chat history will not persist.");
+}
 
+// ─── MongoDB Setup ────────────────────────────────────────────────────────────
+let db = null;
+let mongoClient = null;
+
+async function connectMongo() {
+  if (db) return db;
+  if (!MONGODB_URI) return null;
+  try {
+    mongoClient = new MongoClient(MONGODB_URI);
+    await mongoClient.connect();
+    db = mongoClient.db("kapruka_agent");
+    // Create index for quick lookup by sessionId and sorting by date
+    await db.collection("chat_sessions").createIndex({ createdAt: -1 });
+    console.log("✅ Connected to MongoDB Atlas");
+    return db;
+  } catch (err) {
+    console.error("❌ MongoDB connection failed:", err.message);
+    return null;
+  }
+}
+
+function getChatCollection() {
+  return db?.collection("chat_sessions") ?? null;
+}
+
+// ─── Session helpers (MongoDB-backed, with in-memory fallback) ────────────────
+const memSessions = new Map(); // fallback when MongoDB unavailable
+
+async function getHistory(sessionId) {
+  const col = getChatCollection();
+  if (col) {
+    const doc = await col.findOne({ _id: sessionId });
+    return doc ? doc.messages : [];
+  }
+  // in-memory fallback
+  if (!memSessions.has(sessionId)) memSessions.set(sessionId, []);
+  return memSessions.get(sessionId);
+}
+
+async function saveHistory(sessionId, messages, firstUserMessage) {
+  const col = getChatCollection();
+  const now = new Date();
+  if (col) {
+    await col.updateOne(
+      { _id: sessionId },
+      {
+        $set: {
+          messages,
+          updatedAt: now,
+        },
+        $setOnInsert: {
+          _id: sessionId,
+          title: firstUserMessage
+            ? firstUserMessage.slice(0, 60) + (firstUserMessage.length > 60 ? "…" : "")
+            : "New Chat",
+          createdAt: now,
+        },
+      },
+      { upsert: true }
+    );
+  } else {
+    memSessions.set(sessionId, messages);
+  }
+}
+
+const MAX_HISTORY_MESSAGES = 24;
+function trimHistory(history) {
+  if (history.length > MAX_HISTORY_MESSAGES) {
+    history.splice(0, history.length - MAX_HISTORY_MESSAGES);
+  }
+}
+
+// ─── Express ──────────────────────────────────────────────────────────────────
 const app = express();
 app.use(cors({
   origin: (origin, callback) => {
-    // Automatically allow localhost/127.0.0.1 in development, or the configured ALLOWED_ORIGIN, or requests with no origin
     if (
       !origin ||
       origin.startsWith("http://localhost:") ||
@@ -44,21 +120,7 @@ app.use(cors({
 
 app.use(express.json({ limit: "2mb" }));
 
-// In-memory session store: sessionId -> array of message objects.
-const sessions = new Map();
-
-function getHistory(sessionId) {
-  if (!sessions.has(sessionId)) sessions.set(sessionId, []);
-  return sessions.get(sessionId);
-}
-
-const MAX_HISTORY_MESSAGES = 24;
-function trimHistory(history) {
-  if (history.length > MAX_HISTORY_MESSAGES) {
-    history.splice(0, history.length - MAX_HISTORY_MESSAGES);
-  }
-}
-
+// ─── MCP helpers ─────────────────────────────────────────────────────────────
 function mcpPost(baseUrl, payload, sessionId) {
   return new Promise((resolve, reject) => {
     const urlObj = new URL(baseUrl);
@@ -300,9 +362,12 @@ function processToolResponse(toolName, responseData, products, orderRef) {
   }
 }
 
+// ─── Routes ───────────────────────────────────────────────────────────────────
 app.get("/", (_req, res) => res.send("Kapruka Agent Backend is running successfully!"));
+
 app.get("/health", (_req, res) => res.json({
   ok: true,
+  mongo: { connected: !!db },
   mcp: {
     url: KAPRUKA_MCP_URL,
     connected: mcpTools.length > 0,
@@ -311,14 +376,95 @@ app.get("/health", (_req, res) => res.json({
   },
 }));
 
+// ─── Chat History Endpoints ───────────────────────────────────────────────────
 
+/**
+ * GET /chats
+ * Returns a list of all chat sessions (id, title, createdAt, messageCount)
+ */
+app.get("/chats", async (_req, res) => {
+  try {
+    const col = getChatCollection();
+    if (!col) {
+      // Return in-memory sessions as fallback
+      const list = Array.from(memSessions.entries()).map(([id, msgs]) => ({
+        id,
+        title: msgs.find(m => m.role === "user")?.content?.slice(0, 60) || "New Chat",
+        createdAt: new Date().toISOString(),
+        messageCount: msgs.length,
+      }));
+      return res.json(list);
+    }
+    const sessions = await col
+      .find({}, { projection: { _id: 1, title: 1, createdAt: 1, updatedAt: 1, messages: 1 } })
+      .sort({ updatedAt: -1, createdAt: -1 })
+      .toArray();
+
+    const list = sessions.map(s => ({
+      id: s._id,
+      title: s.title || "New Chat",
+      createdAt: s.createdAt,
+      updatedAt: s.updatedAt,
+      messageCount: s.messages?.length ?? 0,
+    }));
+    res.json(list);
+  } catch (err) {
+    console.error("GET /chats error:", err);
+    res.status(500).json({ error: "Failed to fetch chat history." });
+  }
+});
+
+/**
+ * GET /chats/:id
+ * Returns full message history for a single chat session
+ */
+app.get("/chats/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const col = getChatCollection();
+    if (!col) {
+      const msgs = memSessions.get(id) || [];
+      return res.json({ id, messages: msgs });
+    }
+    const doc = await col.findOne({ _id: id });
+    if (!doc) return res.status(404).json({ error: "Chat not found." });
+    res.json({ id: doc._id, title: doc.title, messages: doc.messages || [], createdAt: doc.createdAt });
+  } catch (err) {
+    console.error("GET /chats/:id error:", err);
+    res.status(500).json({ error: "Failed to load chat." });
+  }
+});
+
+/**
+ * DELETE /chats/:id
+ * Permanently deletes a chat session from the database
+ */
+app.delete("/chats/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const col = getChatCollection();
+    if (!col) {
+      memSessions.delete(id);
+      return res.json({ ok: true });
+    }
+    const result = await col.deleteOne({ _id: id });
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ error: "Chat not found." });
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("DELETE /chats/:id error:", err);
+    res.status(500).json({ error: "Failed to delete chat." });
+  }
+});
+
+// ─── Main Chat Endpoint ───────────────────────────────────────────────────────
 app.post("/chat", async (req, res) => {
   if (!process.env.NVIDIA_API_KEY) {
     return res.status(500).json({ error: "NVIDIA_API_KEY is not configured on the server." });
   }
 
   const { sessionId, message } = req.body ?? {};
-
 
   if (!sessionId || typeof sessionId !== "string") {
     return res.status(400).json({ error: "Missing sessionId" });
@@ -327,7 +473,10 @@ app.post("/chat", async (req, res) => {
     return res.status(400).json({ error: "Missing message" });
   }
 
-  const history = getHistory(sessionId);
+  const history = await getHistory(sessionId);
+  const isFirstMessage = history.length === 0;
+  const firstUserMessage = isFirstMessage ? message : null;
+
   history.push({ role: "user", content: message });
 
   try {
@@ -356,7 +505,6 @@ app.post("/chat", async (req, res) => {
         temperature: 0.2,
         top_p: 1,
       };
-
 
       if (openAiTools.length > 0) {
         requestBody.tools = openAiTools;
@@ -424,6 +572,9 @@ app.post("/chat", async (req, res) => {
       history.push({ role: "assistant", content: text });
       trimHistory(history);
 
+      // Persist to MongoDB
+      await saveHistory(sessionId, history, firstUserMessage);
+
       return res.json({ text, products, order: orderRef.value });
     }
 
@@ -437,11 +588,16 @@ app.post("/chat", async (req, res) => {
   }
 });
 
+// ─── Server Start ─────────────────────────────────────────────────────────────
 if (!process.env.VERCEL) {
   app.listen(PORT, async () => {
     console.log(`Kapu backend running on http://localhost:${PORT}`);
+    await connectMongo();
     await loadMcpTools();
   });
+} else {
+  // On Vercel, connect lazily on first request
+  connectMongo().catch(err => console.error("Mongo connect error:", err));
 }
 
 export default app;
