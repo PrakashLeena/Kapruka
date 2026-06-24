@@ -256,7 +256,7 @@ async function getOpenAiTools() {
 
 const SITUATION_MAP = [
   // Apology / relationship
-  { rx: /upset|angry|angry|fight|argue|apolog|sorry|forgive|mad|kadura|kaduwela|生气/i, terms: ["flowers", "chocolates"] },
+  { rx: /upset|angry|fight|argue|apolog|sorry|forgive|mad|kadura|kaduwela|husbandan|wahini/i, terms: ["flowers", "chocolates"] },
   // Birthday
   { rx: /birthday|born|upandina|upadina|pirandha/i, terms: ["birthday cake", "birthday gift"] },
   // Anniversary / love
