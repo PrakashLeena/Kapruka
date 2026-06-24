@@ -24,6 +24,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [currentProducts, setCurrentProducts] = useState([]);
   const [selectedProduct, setSelectedProduct] = useState(null);
+  const [isSearching, setIsSearching] = useState(false);
   const sessionId = useRef(crypto.randomUUID());
   const scrollRef = useRef(null);
 
@@ -38,6 +39,7 @@ export default function App() {
     setMessages((prev) => [...prev, { role: "user", text: trimmed }]);
     setInput("");
     setLoading(true);
+    setIsSearching(true);
 
     try {
       const res = await fetch(`${BACKEND_URL}/chat`, {
@@ -63,6 +65,7 @@ export default function App() {
         setCurrentProducts(data.products);
         setSelectedProduct(null);
       }
+      // If no new products came back, keep the previous ones visible
     } catch (err) {
       console.error(err);
       setMessages((prev) => [
@@ -76,6 +79,7 @@ export default function App() {
       ]);
     } finally {
       setLoading(false);
+      setIsSearching(false);
     }
   }
 
@@ -178,6 +182,7 @@ export default function App() {
             onAddToCart={(product) => sendMessage(`Add ${product.name} to my cart`)}
             selectedProduct={selectedProduct}
             setSelectedProduct={setSelectedProduct}
+            isSearching={isSearching}
           />
         </div>
       </div>
