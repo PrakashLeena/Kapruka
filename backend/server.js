@@ -37,7 +37,8 @@ async function connectMongo() {
     mongoClient = new MongoClient(MONGODB_URI);
     await mongoClient.connect();
     db = mongoClient.db("kapruka_agent");
-    // Create index for quick lookup by sessionId and sorting by date
+    // Create index for quick lookup by sessionId/userId and sorting by date
+    await db.collection("chat_sessions").createIndex({ userId: 1, updatedAt: -1 });
     await db.collection("chat_sessions").createIndex({ createdAt: -1 });
     console.log("✅ Connected to MongoDB Atlas");
     return db;
@@ -54,10 +55,12 @@ function getChatCollection() {
 // ─── Session helpers (MongoDB-backed, with in-memory fallback) ────────────────
 const memSessions = new Map(); // fallback when MongoDB unavailable
 
-async function getHistory(sessionId) {
+async function getHistory(sessionId, userId) {
   const col = getChatCollection();
   if (col) {
-    const doc = await col.findOne({ _id: sessionId });
+    const query = { _id: sessionId };
+    if (userId) query.userId = userId;
+    const doc = await col.findOne(query);
     return doc ? doc.messages : [];
   }
   // in-memory fallback
@@ -65,25 +68,29 @@ async function getHistory(sessionId) {
   return memSessions.get(sessionId);
 }
 
-async function saveHistory(sessionId, messages, firstUserMessage) {
+async function saveHistory(sessionId, messages, firstUserMessage, userId) {
   const col = getChatCollection();
   const now = new Date();
   if (col) {
+    const update = {
+      $set: {
+        messages,
+        updatedAt: now,
+      },
+      $setOnInsert: {
+        _id: sessionId,
+        title: firstUserMessage
+          ? firstUserMessage.slice(0, 60) + (firstUserMessage.length > 60 ? "…" : "")
+          : "New Chat",
+        createdAt: now,
+      },
+    };
+    if (userId) {
+      update.$setOnInsert.userId = userId;
+    }
     await col.updateOne(
       { _id: sessionId },
-      {
-        $set: {
-          messages,
-          updatedAt: now,
-        },
-        $setOnInsert: {
-          _id: sessionId,
-          title: firstUserMessage
-            ? firstUserMessage.slice(0, 60) + (firstUserMessage.length > 60 ? "…" : "")
-            : "New Chat",
-          createdAt: now,
-        },
-      },
+      update,
       { upsert: true }
     );
   } else {
@@ -382,8 +389,9 @@ app.get("/health", (_req, res) => res.json({
  * GET /chats
  * Returns a list of all chat sessions (id, title, createdAt, messageCount)
  */
-app.get("/chats", async (_req, res) => {
+app.get("/chats", async (req, res) => {
   try {
+    const { userId } = req.query;
     const col = getChatCollection();
     if (!col) {
       // Return in-memory sessions as fallback
@@ -395,8 +403,12 @@ app.get("/chats", async (_req, res) => {
       }));
       return res.json(list);
     }
+    const query = {};
+    if (userId) {
+      query.userId = userId;
+    }
     const sessions = await col
-      .find({}, { projection: { _id: 1, title: 1, createdAt: 1, updatedAt: 1, messages: 1 } })
+      .find(query, { projection: { _id: 1, title: 1, createdAt: 1, updatedAt: 1, messages: 1 } })
       .sort({ updatedAt: -1, createdAt: -1 })
       .toArray();
 
@@ -421,12 +433,17 @@ app.get("/chats", async (_req, res) => {
 app.get("/chats/:id", async (req, res) => {
   try {
     const { id } = req.params;
+    const { userId } = req.query;
     const col = getChatCollection();
     if (!col) {
       const msgs = memSessions.get(id) || [];
       return res.json({ id, messages: msgs });
     }
-    const doc = await col.findOne({ _id: id });
+    const query = { _id: id };
+    if (userId) {
+      query.userId = userId;
+    }
+    const doc = await col.findOne(query);
     if (!doc) return res.status(404).json({ error: "Chat not found." });
     res.json({ id: doc._id, title: doc.title, messages: doc.messages || [], createdAt: doc.createdAt });
   } catch (err) {
@@ -442,12 +459,17 @@ app.get("/chats/:id", async (req, res) => {
 app.delete("/chats/:id", async (req, res) => {
   try {
     const { id } = req.params;
+    const { userId } = req.query;
     const col = getChatCollection();
     if (!col) {
       memSessions.delete(id);
       return res.json({ ok: true });
     }
-    const result = await col.deleteOne({ _id: id });
+    const query = { _id: id };
+    if (userId) {
+      query.userId = userId;
+    }
+    const result = await col.deleteOne(query);
     if (result.deletedCount === 0) {
       return res.status(404).json({ error: "Chat not found." });
     }
@@ -464,7 +486,7 @@ app.post("/chat", async (req, res) => {
     return res.status(500).json({ error: "NVIDIA_API_KEY is not configured on the server." });
   }
 
-  const { sessionId, message } = req.body ?? {};
+  const { sessionId, message, userId } = req.body ?? {};
 
   if (!sessionId || typeof sessionId !== "string") {
     return res.status(400).json({ error: "Missing sessionId" });
@@ -473,7 +495,7 @@ app.post("/chat", async (req, res) => {
     return res.status(400).json({ error: "Missing message" });
   }
 
-  const history = await getHistory(sessionId);
+  const history = await getHistory(sessionId, userId);
   const isFirstMessage = history.length === 0;
   const firstUserMessage = isFirstMessage ? message : null;
 
@@ -573,7 +595,7 @@ app.post("/chat", async (req, res) => {
       trimHistory(history);
 
       // Persist to MongoDB
-      await saveHistory(sessionId, history, firstUserMessage);
+      await saveHistory(sessionId, history, firstUserMessage, userId);
 
       return res.json({ text, products, order: orderRef.value });
     }

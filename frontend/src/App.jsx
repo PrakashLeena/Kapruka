@@ -17,6 +17,16 @@ const STARTERS = [
   "මගේ යාළුවට උපන්දින තෑග්ගක්",
 ];
 
+// Helper to get or create a persistent guest user ID
+function getOrCreateUser() {
+  let user = localStorage.getItem("kapruka_user");
+  if (!user) {
+    user = "guest_" + Math.random().toString(36).substring(2, 6);
+    localStorage.setItem("kapruka_user", user);
+  }
+  return user;
+}
+
 export default function App() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
@@ -24,17 +34,18 @@ export default function App() {
   const [currentProducts, setCurrentProducts] = useState([]);
   const [selectedProduct, setSelectedProduct] = useState(null);
   
-  // Chat sessions state
+  // Chat sessions & user states
+  const [currentUser, setCurrentUser] = useState(getOrCreateUser);
   const [activeChatId, setActiveChatId] = useState(crypto.randomUUID());
   const [chats, setChats] = useState([]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   
   const scrollRef = useRef(null);
 
-  // Fetch all chat sessions on mount
+  // Fetch chat sessions filtered by current user
   async function fetchChats() {
     try {
-      const res = await fetch(`${BACKEND_URL}/chats`);
+      const res = await fetch(`${BACKEND_URL}/chats?userId=${encodeURIComponent(currentUser)}`);
       if (res.ok) {
         const data = await res.json();
         setChats(data);
@@ -44,9 +55,10 @@ export default function App() {
     }
   }
 
+  // Refetch chats when user changes
   useEffect(() => {
     fetchChats();
-  }, []);
+  }, [currentUser]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -57,7 +69,7 @@ export default function App() {
     setActiveChatId(chatId);
     setLoading(true);
     try {
-      const res = await fetch(`${BACKEND_URL}/chats/${chatId}`);
+      const res = await fetch(`${BACKEND_URL}/chats/${chatId}?userId=${encodeURIComponent(currentUser)}`);
       if (!res.ok) throw new Error("Failed to load chat history");
       const data = await res.json();
       
@@ -82,7 +94,7 @@ export default function App() {
   // Delete a chat session
   async function deleteChat(chatId) {
     try {
-      const res = await fetch(`${BACKEND_URL}/chats/${chatId}`, {
+      const res = await fetch(`${BACKEND_URL}/chats/${chatId}?userId=${encodeURIComponent(currentUser)}`, {
         method: "DELETE",
       });
       if (res.ok) {
@@ -94,6 +106,14 @@ export default function App() {
     } catch (err) {
       console.error("Error deleting chat session:", err);
     }
+  }
+
+  // Switch active user profile
+  function handleSwitchUser(newUser) {
+    localStorage.setItem("kapruka_user", newUser);
+    setCurrentUser(newUser);
+    // Clear chat display for the new user profile
+    handleNewChat();
   }
 
   // Start a new chat
@@ -116,7 +136,11 @@ export default function App() {
       const res = await fetch(`${BACKEND_URL}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId: activeChatId, message: trimmed }),
+        body: JSON.stringify({
+          sessionId: activeChatId,
+          message: trimmed,
+          userId: currentUser,
+        }),
       });
 
       if (!res.ok) throw new Error("Request failed");
@@ -198,6 +222,8 @@ export default function App() {
           onDeleteChat={deleteChat}
           isOpen={sidebarOpen}
           onClose={() => setSidebarOpen(false)}
+          currentUser={currentUser}
+          onSwitchUser={handleSwitchUser}
         />
 
         {/* Left Pane: Chat */}

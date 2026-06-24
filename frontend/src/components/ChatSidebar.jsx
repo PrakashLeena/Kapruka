@@ -8,8 +8,12 @@ export default function ChatSidebar({
   onDeleteChat,
   isOpen,
   onClose,
+  currentUser,
+  onSwitchUser,
 }) {
   const [deletingId, setDeletingId] = useState(null);
+  const [isEditingUser, setIsEditingUser] = useState(false);
+  const [userInputValue, setUserInputValue] = useState("");
 
   const formatDate = (dateString) => {
     if (!dateString) return "";
@@ -35,6 +39,15 @@ export default function ChatSidebar({
       } finally {
         setDeletingId(null);
       }
+    }
+  };
+
+  const handleUserSubmit = (e) => {
+    e.preventDefault();
+    const cleanUsername = userInputValue.trim();
+    if (cleanUsername) {
+      onSwitchUser(cleanUsername);
+      setIsEditingUser(false);
     }
   };
 
@@ -147,6 +160,51 @@ export default function ChatSidebar({
                 </div>
               );
             })
+          )}
+        </div>
+
+        {/* User Profile Section at the bottom */}
+        <div className="p-4 shrink-0 border-t border-cream-200 bg-cream-100/50 flex flex-col gap-2">
+          {isEditingUser ? (
+            <form onSubmit={handleUserSubmit} className="flex gap-1.5 items-center">
+              <input
+                type="text"
+                value={userInputValue}
+                onChange={(e) => setUserInputValue(e.target.value)}
+                placeholder="Enter username..."
+                className="flex-1 bg-white border border-cream-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-teal"
+                autoFocus
+              />
+              <button
+                type="submit"
+                className="bg-teal hover:bg-teal-light text-white text-xs px-3 py-1.5 rounded-lg transition-colors font-medium"
+              >
+                Save
+              </button>
+            </form>
+          ) : (
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="w-8 h-8 rounded-full bg-teal text-white flex items-center justify-center font-bold text-xs shrink-0">
+                  {currentUser.substring(0, 2).toUpperCase()}
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[10px] text-charcoal/40 uppercase tracking-wider font-semibold">Logged in as</p>
+                  <p className="text-xs font-bold text-charcoal truncate" title={currentUser}>
+                    {currentUser}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setUserInputValue(currentUser);
+                  setIsEditingUser(true);
+                }}
+                className="text-[10px] text-teal hover:underline font-semibold"
+              >
+                Switch
+              </button>
+            </div>
           )}
         </div>
       </aside>
