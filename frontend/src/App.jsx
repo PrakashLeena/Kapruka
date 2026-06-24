@@ -3,6 +3,7 @@ import ChatMessage from "./components/ChatMessage.jsx";
 import TypingIndicator from "./components/TypingIndicator.jsx";
 import RightPane from "./components/RightPane.jsx";
 import ChatSidebar from "./components/ChatSidebar.jsx";
+import { onAuthChange } from "./firebase.js";
 
 const BACKEND_URL = (
   import.meta.env.VITE_BACKEND_URL !== undefined
@@ -17,35 +18,47 @@ const STARTERS = [
   "මගේ යාළුවට උපන්දින තෑග්ගක්",
 ];
 
-// Helper to get or create a persistent guest user ID
-function getOrCreateUser() {
-  let user = localStorage.getItem("kapruka_user");
-  if (!user) {
-    user = "guest_" + Math.random().toString(36).substring(2, 6);
-    localStorage.setItem("kapruka_user", user);
-  }
-  return user;
-}
-
 export default function App() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [currentProducts, setCurrentProducts] = useState([]);
   const [selectedProduct, setSelectedProduct] = useState(null);
-  
-  // Chat sessions & user states
-  const [currentUser, setCurrentUser] = useState(getOrCreateUser);
+
+  // Firebase auth state: null = not logged in, object = logged in user
+  const [firebaseUser, setFirebaseUser] = useState(undefined); // undefined = still loading
+
+  // Chat sessions state
   const [activeChatId, setActiveChatId] = useState(crypto.randomUUID());
   const [chats, setChats] = useState([]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  
+
   const scrollRef = useRef(null);
 
-  // Fetch chat sessions filtered by current user
+  // Listen to Firebase auth state changes
+  useEffect(() => {
+    const unsubscribe = onAuthChange((user) => {
+      setFirebaseUser(user); // null if logged out, user object if logged in
+      // When auth changes, reset the chat UI to avoid cross-user data leaking
+      setActiveChatId(crypto.randomUUID());
+      setMessages([]);
+      setCurrentProducts([]);
+      setSelectedProduct(null);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Derive the userId from Firebase user uid, or fall back to guest ID
+  const userId = firebaseUser?.uid ?? null;
+
+  // Fetch chat sessions filtered by current user's Firebase uid
   async function fetchChats() {
+    if (!userId) {
+      setChats([]);
+      return;
+    }
     try {
-      const res = await fetch(`${BACKEND_URL}/chats?userId=${encodeURIComponent(currentUser)}`);
+      const res = await fetch(`${BACKEND_URL}/chats?userId=${encodeURIComponent(userId)}`);
       if (res.ok) {
         const data = await res.json();
         setChats(data);
@@ -58,7 +71,7 @@ export default function App() {
   // Refetch chats when user changes
   useEffect(() => {
     fetchChats();
-  }, [currentUser]);
+  }, [userId]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -66,20 +79,21 @@ export default function App() {
 
   // Load a selected chat session
   async function selectChat(chatId) {
+    if (!userId) return;
     setActiveChatId(chatId);
     setLoading(true);
     try {
-      const res = await fetch(`${BACKEND_URL}/chats/${chatId}?userId=${encodeURIComponent(currentUser)}`);
+      const res = await fetch(`${BACKEND_URL}/chats/${chatId}?userId=${encodeURIComponent(userId)}`);
       if (!res.ok) throw new Error("Failed to load chat history");
       const data = await res.json();
-      
+
       const formattedMessages = (data.messages || []).map((m) => ({
         role: m.role,
         text: m.content || m.text || "",
         products: [],
         order: null,
       }));
-      
+
       setMessages(formattedMessages);
       setCurrentProducts([]);
       setSelectedProduct(null);
@@ -93,8 +107,9 @@ export default function App() {
 
   // Delete a chat session
   async function deleteChat(chatId) {
+    if (!userId) return;
     try {
-      const res = await fetch(`${BACKEND_URL}/chats/${chatId}?userId=${encodeURIComponent(currentUser)}`, {
+      const res = await fetch(`${BACKEND_URL}/chats/${chatId}?userId=${encodeURIComponent(userId)}`, {
         method: "DELETE",
       });
       if (res.ok) {
@@ -106,14 +121,6 @@ export default function App() {
     } catch (err) {
       console.error("Error deleting chat session:", err);
     }
-  }
-
-  // Switch active user profile
-  function handleSwitchUser(newUser) {
-    localStorage.setItem("kapruka_user", newUser);
-    setCurrentUser(newUser);
-    // Clear chat display for the new user profile
-    handleNewChat();
   }
 
   // Start a new chat
@@ -139,7 +146,7 @@ export default function App() {
         body: JSON.stringify({
           sessionId: activeChatId,
           message: trimmed,
-          userId: currentUser,
+          userId: userId || undefined,
         }),
       });
 
@@ -160,7 +167,7 @@ export default function App() {
         setCurrentProducts(data.products);
         setSelectedProduct(null);
       }
-      
+
       // Refresh chat sidebar to display updated titles/sessions
       fetchChats();
     } catch (err) {
@@ -182,6 +189,18 @@ export default function App() {
   function handleSubmit(e) {
     e.preventDefault();
     sendMessage(input);
+  }
+
+  // Show a loading spinner while Firebase resolves initial auth state
+  if (firebaseUser === undefined) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-cream-50">
+        <div className="flex flex-col items-center gap-3 text-charcoal/60">
+          <div className="w-10 h-10 border-4 border-teal border-t-transparent rounded-full animate-spin" />
+          <p className="text-sm">Loading Kapu...</p>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -210,6 +229,26 @@ export default function App() {
             <p className="text-teal-50/70 text-xs">Your Kapruka shopping companion</p>
           </div>
         </div>
+
+        {/* Header: show user info or sign-in hint */}
+        {firebaseUser && (
+          <div className="hidden md:flex items-center gap-2">
+            {firebaseUser.photoURL ? (
+              <img
+                src={firebaseUser.photoURL}
+                alt={firebaseUser.displayName}
+                className="w-7 h-7 rounded-full border-2 border-white/30"
+              />
+            ) : (
+              <div className="w-7 h-7 rounded-full bg-terracotta flex items-center justify-center text-xs font-bold">
+                {(firebaseUser.displayName || firebaseUser.email || "U").substring(0, 1).toUpperCase()}
+              </div>
+            )}
+            <span className="text-xs text-teal-50/80 max-w-[120px] truncate">
+              {firebaseUser.displayName || firebaseUser.email}
+            </span>
+          </div>
+        )}
       </header>
 
       {/* Main split layout with Sidebar included */}
@@ -222,8 +261,7 @@ export default function App() {
           onDeleteChat={deleteChat}
           isOpen={sidebarOpen}
           onClose={() => setSidebarOpen(false)}
-          currentUser={currentUser}
-          onSwitchUser={handleSwitchUser}
+          currentUser={firebaseUser}
         />
 
         {/* Left Pane: Chat */}
@@ -251,6 +289,11 @@ export default function App() {
                       </button>
                     ))}
                   </div>
+                  {!firebaseUser && (
+                    <p className="text-xs text-charcoal/40 bg-cream-100 px-4 py-2 rounded-full">
+                      💡 Sign in via the sidebar to save your conversation history
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -294,7 +337,9 @@ export default function App() {
                 </svg>
               </button>
             </div>
-            <p className="text-center text-[11px] text-charcoal/40 mt-2">Powered by Kapruka · guest checkout, no account needed</p>
+            <p className="text-center text-[11px] text-charcoal/40 mt-2">
+              Powered by Kapruka · guest checkout, no account needed
+            </p>
           </form>
         </div>
 
