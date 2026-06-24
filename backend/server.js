@@ -58,43 +58,44 @@ const memSessions = new Map(); // fallback when MongoDB unavailable
 async function getHistory(sessionId, userId) {
   const col = getChatCollection();
   if (col) {
-    const query = { _id: sessionId };
-    if (userId) query.userId = userId;
-    const doc = await col.findOne(query);
+    if (!userId) return [];
+    const doc = await col.findOne({ _id: sessionId, userId });
     return doc ? doc.messages : [];
   }
   // in-memory fallback
-  if (!memSessions.has(sessionId)) memSessions.set(sessionId, []);
-  return memSessions.get(sessionId);
+  const memKey = `${userId || "guest"}:${sessionId}`;
+  if (!memSessions.has(memKey)) memSessions.set(memKey, []);
+  return memSessions.get(memKey);
 }
 
 async function saveHistory(sessionId, messages, firstUserMessage, userId) {
   const col = getChatCollection();
   const now = new Date();
   if (col) {
+    if (!userId) {
+      console.warn("Attempted to save chat history without a userId");
+      return;
+    }
     const update = {
       $set: {
         messages,
         updatedAt: now,
       },
       $setOnInsert: {
-        _id: sessionId,
         title: firstUserMessage
           ? firstUserMessage.slice(0, 60) + (firstUserMessage.length > 60 ? "…" : "")
           : "New Chat",
         createdAt: now,
       },
     };
-    if (userId) {
-      update.$setOnInsert.userId = userId;
-    }
     await col.updateOne(
-      { _id: sessionId },
+      { _id: sessionId, userId },
       update,
       { upsert: true }
     );
   } else {
-    memSessions.set(sessionId, messages);
+    const memKey = `${userId || "guest"}:${sessionId}`;
+    memSessions.set(memKey, messages);
   }
 }
 
@@ -392,23 +393,27 @@ app.get("/health", (_req, res) => res.json({
 app.get("/chats", async (req, res) => {
   try {
     const { userId } = req.query;
+    if (!userId) {
+      return res.status(400).json({ error: "userId query parameter is required." });
+    }
     const col = getChatCollection();
     if (!col) {
-      // Return in-memory sessions as fallback
-      const list = Array.from(memSessions.entries()).map(([id, msgs]) => ({
-        id,
-        title: msgs.find(m => m.role === "user")?.content?.slice(0, 60) || "New Chat",
-        createdAt: new Date().toISOString(),
-        messageCount: msgs.length,
-      }));
+      // Return in-memory sessions as fallback, filtered by user
+      const list = Array.from(memSessions.entries())
+        .filter(([key]) => key.startsWith(`${userId}:`))
+        .map(([key, msgs]) => {
+          const id = key.split(":")[1];
+          return {
+            id,
+            title: msgs.find(m => m.role === "user")?.content?.slice(0, 60) || "New Chat",
+            createdAt: new Date().toISOString(),
+            messageCount: msgs.length,
+          };
+        });
       return res.json(list);
     }
-    const query = {};
-    if (userId) {
-      query.userId = userId;
-    }
     const sessions = await col
-      .find(query, { projection: { _id: 1, title: 1, createdAt: 1, updatedAt: 1, messages: 1 } })
+      .find({ userId }, { projection: { _id: 1, title: 1, createdAt: 1, updatedAt: 1, messages: 1 } })
       .sort({ updatedAt: -1, createdAt: -1 })
       .toArray();
 
@@ -434,16 +439,16 @@ app.get("/chats/:id", async (req, res) => {
   try {
     const { id } = req.params;
     const { userId } = req.query;
+    if (!userId) {
+      return res.status(400).json({ error: "userId query parameter is required." });
+    }
     const col = getChatCollection();
     if (!col) {
-      const msgs = memSessions.get(id) || [];
+      const memKey = `${userId}:${id}`;
+      const msgs = memSessions.get(memKey) || [];
       return res.json({ id, messages: msgs });
     }
-    const query = { _id: id };
-    if (userId) {
-      query.userId = userId;
-    }
-    const doc = await col.findOne(query);
+    const doc = await col.findOne({ _id: id, userId });
     if (!doc) return res.status(404).json({ error: "Chat not found." });
     res.json({ id: doc._id, title: doc.title, messages: doc.messages || [], createdAt: doc.createdAt });
   } catch (err) {
@@ -460,16 +465,16 @@ app.delete("/chats/:id", async (req, res) => {
   try {
     const { id } = req.params;
     const { userId } = req.query;
+    if (!userId) {
+      return res.status(400).json({ error: "userId query parameter is required." });
+    }
     const col = getChatCollection();
     if (!col) {
-      memSessions.delete(id);
+      const memKey = `${userId}:${id}`;
+      memSessions.delete(memKey);
       return res.json({ ok: true });
     }
-    const query = { _id: id };
-    if (userId) {
-      query.userId = userId;
-    }
-    const result = await col.deleteOne(query);
+    const result = await col.deleteOne({ _id: id, userId });
     if (result.deletedCount === 0) {
       return res.status(404).json({ error: "Chat not found." });
     }

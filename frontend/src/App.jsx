@@ -48,8 +48,18 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
+  // Generate or retrieve a persistent guest ID
+  const [guestId] = useState(() => {
+    let id = localStorage.getItem("kapruka_guest_id");
+    if (!id) {
+      id = `guest_${crypto.randomUUID()}`;
+      localStorage.setItem("kapruka_guest_id", id);
+    }
+    return id;
+  });
+
   // Derive the userId from Firebase user uid, or fall back to guest ID
-  const userId = firebaseUser?.uid ?? null;
+  const userId = firebaseUser?.uid ?? guestId;
 
   // Fetch chat sessions filtered by current user's Firebase uid
   async function fetchChats() {
@@ -146,7 +156,7 @@ export default function App() {
         body: JSON.stringify({
           sessionId: activeChatId,
           message: trimmed,
-          userId: userId || undefined,
+          userId: userId,
         }),
       });
 
