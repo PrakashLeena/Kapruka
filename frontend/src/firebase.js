@@ -1,5 +1,5 @@
 // firebase.js — Firebase initialization and auth helpers
-import { initializeApp } from "firebase/app";
+import { initializeApp, getApps, getApp } from "firebase/app";
 import {
   getAuth,
   GoogleAuthProvider,
@@ -21,9 +21,17 @@ const firebaseConfig = {
   measurementId: "G-ZDZCSMWGHS",
 };
 
-const app = initializeApp(firebaseConfig);
+// Use existing app if already initialized (safe for Vite HMR)
+const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
+
 export const auth = getAuth(app);
+
+// Force browser language for auth UI messages
+auth.useDeviceLanguage();
+
+// Google provider — always show account picker
 export const googleProvider = new GoogleAuthProvider();
+googleProvider.setCustomParameters({ prompt: "select_account" });
 
 // ─── Auth Helpers ─────────────────────────────────────────────────────────────
 
@@ -31,14 +39,16 @@ export function signInWithGoogle() {
   return signInWithPopup(auth, googleProvider);
 }
 
-export async function signInWithEmail(email, password) {
+export function signInWithEmail(email, password) {
   return signInWithEmailAndPassword(auth, email, password);
 }
 
 export async function signUpWithEmail(email, password, displayName) {
   const credential = await createUserWithEmailAndPassword(auth, email, password);
-  if (displayName) {
-    await updateProfile(credential.user, { displayName });
+  if (displayName && displayName.trim()) {
+    await updateProfile(credential.user, { displayName: displayName.trim() });
+    // Force token refresh so displayName is available immediately
+    await credential.user.reload();
   }
   return credential;
 }
