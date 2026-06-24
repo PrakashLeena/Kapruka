@@ -357,6 +357,8 @@ function processToolResponse(toolName, responseData, products, orderRef) {
     return; // Not JSON
   }
 
+  if (!parsed || typeof parsed !== "object") return;
+
   const items = Array.isArray(parsed) ? parsed : parsed.results ?? parsed.products ?? [parsed];
 
   for (const item of items) {

@@ -9,7 +9,8 @@ import https from "https";
 import http from "http";
 
 // ─── Config (all from Vercel env vars — no .env file needed) ───────────────
-const MODEL         = process.env.CLAUDE_MODEL    || "z-ai/glm-5.1";
+const MODEL           = process.env.CLAUDE_MODEL    || "z-ai/glm-5.1";
+const NVIDIA_BASE_URL = process.env.NVIDIA_BASE_URL || "https://integrate.api.nvidia.com/v1";
 const KAPRUKA_MCP_URL = process.env.KAPRUKA_MCP_URL || "https://mcp.kapruka.com/mcp";
 const ALLOWED_ORIGIN  = (process.env.ALLOWED_ORIGIN || "").replace(/\/$/, "");
 
@@ -238,6 +239,7 @@ function processToolResponse(toolName, responseData, products, orderRef) {
   }
   let parsed;
   try { parsed = JSON.parse(rawText); } catch { return; }
+  if (!parsed || typeof parsed !== "object") return;
   const items = Array.isArray(parsed) ? parsed : parsed.results ?? parsed.products ?? [parsed];
   for (const item of items) {
     if (!item || typeof item !== "object") continue;
@@ -372,7 +374,7 @@ app.post("/chat", async (req, res) => {
         tools: openAiTools,
       };
 
-      const response = await fetch(`${process.env.NVIDIA_BASE_URL}/chat/completions`, {
+      const response = await fetch(`${NVIDIA_BASE_URL}/chat/completions`, {
         method: "POST",
         headers: { "Authorization": `Bearer ${process.env.NVIDIA_API_KEY}`, "Content-Type": "application/json" },
         body: JSON.stringify(requestBody),
