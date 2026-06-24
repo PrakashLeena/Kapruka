@@ -358,7 +358,10 @@ app.post("/chat", async (req, res) => {
     const orderRef = { value: null };
 
     // Fire parallel search immediately as a safety net
-    const parallelSearchPromise = parallelProductSearch(message);
+    const parallelSearchPromise = parallelProductSearch(message).catch(err => {
+      console.warn("Parallel search rejected:", err.message);
+      return [];
+    });
 
     for (let loop = 0; loop < 10; loop++) {
       const requestBody = {
