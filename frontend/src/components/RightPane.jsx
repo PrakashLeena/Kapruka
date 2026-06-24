@@ -94,6 +94,44 @@ export default function RightPane({ products, onAddToCart, selectedProduct, setS
               </a>
             )}
           </div>
+
+          {/* Related Products Section */}
+          {(() => {
+            const related = products.filter(p => p.id !== selectedProduct.id).slice(0, 4);
+            if (related.length === 0) return null;
+            return (
+              <div className="mt-6 pt-6 border-t border-cream-100">
+                <h4 className="font-display font-bold text-charcoal text-xs mb-3 uppercase tracking-wider text-charcoal/60">
+                  You might also like
+                </h4>
+                <div className="grid grid-cols-2 gap-3">
+                  {related.map((p, idx) => (
+                    <div
+                      key={p.id ?? idx}
+                      onClick={() => setSelectedProduct(p)}
+                      className="cursor-pointer rounded-xl border border-cream-200/80 p-2 hover:border-teal hover:shadow-sm transition-all flex flex-col bg-cream-50/20"
+                    >
+                      <div className="h-16 bg-white rounded-lg flex items-center justify-center overflow-hidden mb-1.5 relative border border-cream-100">
+                        {p.image ? (
+                          <img src={p.image} alt={p.name} className="w-full h-full object-cover" />
+                        ) : (
+                          <span className="text-xl">🎁</span>
+                        )}
+                      </div>
+                      <p className="text-[10px] font-semibold text-charcoal line-clamp-1 leading-snug">
+                        {p.name}
+                      </p>
+                      {p.price != null && (
+                        <p className="text-[10px] font-bold text-terracotta mt-0.5">
+                          {p.currency ?? "LKR"} {Number(p.price).toLocaleString()}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
         </div>
       </div>
     );

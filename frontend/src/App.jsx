@@ -32,6 +32,7 @@ export default function App() {
   const [activeChatId, setActiveChatId] = useState(crypto.randomUUID());
   const [chats, setChats] = useState([]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState("chat"); // "chat" | "products" on mobile
 
   const scrollRef = useRef(null);
 
@@ -176,6 +177,7 @@ export default function App() {
       if (data.products && data.products.length > 0) {
         setCurrentProducts(data.products);
         setSelectedProduct(null);
+        setActiveTab("products");
       }
 
       // Refresh chat sidebar to display updated titles/sessions
@@ -261,6 +263,37 @@ export default function App() {
         )}
       </header>
 
+      {/* Mobile Tab Switcher */}
+      <div className="shrink-0 flex border-b border-cream-200 bg-white md:hidden">
+        <button
+          type="button"
+          onClick={() => setActiveTab("chat")}
+          className={`flex-1 py-3 text-center text-xs font-bold border-b-2 transition-all uppercase tracking-wider ${
+            activeTab === "chat"
+              ? "border-teal text-teal"
+              : "border-transparent text-charcoal/50"
+          }`}
+        >
+          Chat Conversation
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab("products")}
+          className={`flex-1 py-3 text-center text-xs font-bold border-b-2 transition-all uppercase tracking-wider relative ${
+            activeTab === "products"
+              ? "border-teal text-teal"
+              : "border-transparent text-charcoal/50"
+          }`}
+        >
+          Product Catalog
+          {currentProducts.length > 0 && (
+            <span className="ml-2 px-1.5 py-0.5 text-[9px] font-bold rounded-full bg-terracotta text-white">
+              {currentProducts.length}
+            </span>
+          )}
+        </button>
+      </div>
+
       {/* Main split layout with Sidebar included */}
       <div className="flex-1 flex flex-row overflow-hidden relative">
         <ChatSidebar
@@ -275,7 +308,9 @@ export default function App() {
         />
 
         {/* Left Pane: Chat */}
-        <div className="flex-1 flex flex-col min-w-0 h-full border-r border-cream-200">
+        <div className={`flex-1 flex flex-col min-w-0 h-full border-r border-cream-200 ${
+          activeTab === "chat" ? "flex" : "hidden md:flex"
+        }`}>
           {/* Messages */}
           <main ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-5">
             <div className="max-w-2xl mx-auto flex flex-col gap-4">
@@ -291,6 +326,7 @@ export default function App() {
                   <div className="flex flex-wrap gap-2 justify-center max-w-md">
                     {STARTERS.map((s) => (
                       <button
+                        type="button"
                         key={s}
                         onClick={() => sendMessage(s)}
                         className="text-xs px-3 py-1.5 rounded-full border border-teal/30 text-teal hover:bg-teal hover:text-white transition-colors"
@@ -354,7 +390,9 @@ export default function App() {
         </div>
 
         {/* Right Pane: Products */}
-        <div className="w-full md:w-[380px] lg:w-[420px] shrink-0 h-full border-t md:border-t-0 md:border-l border-cream-200 bg-white">
+        <div className={`w-full md:w-[380px] lg:w-[420px] shrink-0 h-full border-t md:border-t-0 md:border-l border-cream-200 bg-white ${
+          activeTab === "products" ? "block" : "hidden md:block"
+        }`}>
           <RightPane
             products={currentProducts}
             onAddToCart={(product) => sendMessage(`Add ${product.name} to my cart`)}

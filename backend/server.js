@@ -333,7 +333,8 @@ function processToolResponse(toolName, responseData, products, orderRef) {
   try {
     parsed = JSON.parse(rawText);
   } catch {
-    return; // Not JSON
+    // If it's not JSON, it could be a Markdown response. We'll skip product parsing for it.
+    return;
   }
 
   const items = Array.isArray(parsed) ? parsed : parsed.results ?? parsed.products ?? [parsed];
@@ -344,11 +345,22 @@ function processToolResponse(toolName, responseData, products, orderRef) {
     // Order / checkout result (has a pay link).
     const payUrl = item.pay_url ?? item.payment_url ?? item.checkout_url ?? item.pay_link;
     if (payUrl) {
+      let totalVal = null;
+      let currencyVal = "LKR";
+      
+      if (item.summary && typeof item.summary === "object") {
+        totalVal = item.summary.grand_total ?? item.summary.total ?? null;
+        currencyVal = item.summary.currency ?? "LKR";
+      } else {
+        totalVal = item.total ?? item.amount ?? null;
+        currencyVal = item.currency ?? "LKR";
+      }
+
       orderRef.value = {
-        orderNumber: item.order_number ?? item.order_id ?? null,
+        orderNumber: item.order_number ?? item.order_id ?? item.order_ref ?? null,
         payUrl,
-        total: item.total ?? item.amount ?? null,
-        currency: item.currency ?? "LKR",
+        total: totalVal,
+        currency: currencyVal,
       };
       continue;
     }
@@ -357,11 +369,22 @@ function processToolResponse(toolName, responseData, products, orderRef) {
     const name = item.name ?? item.title ?? item.product_name;
     if (!name) continue;
 
+    let priceVal = null;
+    let currencyVal = "LKR";
+
+    if (item.price && typeof item.price === "object") {
+      priceVal = item.price.amount;
+      currencyVal = item.price.currency ?? "LKR";
+    } else {
+      priceVal = item.price ?? item.amount ?? null;
+      currencyVal = item.currency ?? "LKR";
+    }
+
     products.push({
       id: item.id ?? item.product_id ?? name,
       name,
-      price: item.price ?? item.amount ?? null,
-      currency: item.currency ?? "LKR",
+      price: priceVal,
+      currency: currencyVal,
       image: item.image ?? item.image_url ?? item.images?.[0] ?? null,
       url: item.url ?? item.product_url ?? null,
       inStock: item.in_stock ?? item.stock !== 0,
@@ -607,11 +630,26 @@ app.post("/chat", async (req, res) => {
           const toolArgs = JSON.parse(toolCall.function.arguments);
 
           console.log(`Executing tool ${toolName} with args:`, toolArgs);
+          
+          // Wrap flat arguments into a nested 'params' object if needed
+          let finalArgs = toolArgs;
+          const toolMeta = mcpTools.find(t => t.name === toolName);
+          if (toolMeta?.inputSchema?.required?.includes("params") && !toolArgs.params) {
+            finalArgs = { params: toolArgs };
+          }
+          
+          // Force 'response_format' to 'json' so we get structured product lists
+          if (finalArgs.params) {
+            finalArgs.params.response_format = "json";
+          } else {
+            finalArgs.response_format = "json";
+          }
+
           let toolResult;
           try {
             toolResult = await callMcp(KAPRUKA_MCP_URL, "tools/call", {
               name: toolName,
-              arguments: toolArgs,
+              arguments: finalArgs,
             });
             processToolResponse(toolName, toolResult, products, orderRef);
           } catch (err) {
