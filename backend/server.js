@@ -384,6 +384,44 @@ app.get("/health", (_req, res) => res.json({
   },
 }));
 
+app.get("/debug-mcp", async (req, res) => {
+  try {
+    const list = await callMcp(KAPRUKA_MCP_URL, "tools/list");
+    let sampleCall = null;
+    if (list?.tools?.length > 0) {
+      // Find a search or list tool
+      const searchTool = list.tools.find(t => t.name.includes("search") || t.name.includes("products") || t.name.includes("list"));
+      if (searchTool) {
+        const sampleArgs = {};
+        // Check inputSchema to pass correct arg name
+        const props = searchTool.inputSchema?.properties || {};
+        if (props.query) {
+          sampleArgs.query = "cake";
+        } else if (props.keyword) {
+          sampleArgs.keyword = "cake";
+        } else if (props.search) {
+          sampleArgs.search = "cake";
+        }
+        try {
+          sampleCall = await callMcp(KAPRUKA_MCP_URL, "tools/call", {
+            name: searchTool.name,
+            arguments: sampleArgs
+          });
+        } catch (err) {
+          sampleCall = { error: err.message };
+        }
+      }
+    }
+    res.json({
+      mcpUrl: KAPRUKA_MCP_URL,
+      tools: list?.tools || [],
+      sampleCall
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── Chat History Endpoints ───────────────────────────────────────────────────
 
 /**

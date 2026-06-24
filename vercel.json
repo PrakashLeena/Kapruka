@@ -11,6 +11,18 @@
       "destination": "/api/index.js"
     },
     {
+      "source": "/debug-mcp",
+      "destination": "/api/index.js"
+    },
+    {
+      "source": "/chats",
+      "destination": "/api/index.js"
+    },
+    {
+      "source": "/chats/:id",
+      "destination": "/api/index.js"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }
