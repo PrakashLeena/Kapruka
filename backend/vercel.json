@@ -1,11 +1,5 @@
 {
   "version": 2,
-  "functions": {
-    "server.js": {
-      "memory": 512,
-      "maxDuration": 60
-    }
-  },
   "builds": [
     {
       "src": "server.js",

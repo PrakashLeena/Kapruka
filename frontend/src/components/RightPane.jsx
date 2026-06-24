@@ -1,35 +1,6 @@
 import { useState } from "react";
 
-export default function RightPane({ products, onAddToCart, selectedProduct, setSelectedProduct, isSearching }) {
-  // --- Shimmer skeleton shown while backend is fetching ---
-  if (isSearching && (!products || products.length === 0)) {
-    return (
-      <div className="h-full flex flex-col bg-white">
-        <div className="shrink-0 border-b border-cream-200 p-4 flex items-center justify-between">
-          <h2 className="font-display font-bold text-charcoal text-base">Searching Catalog…</h2>
-          <span className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full bg-teal/10 text-teal">
-            <span className="w-2 h-2 rounded-full bg-teal animate-ping inline-block" />
-            Finding products
-          </span>
-        </div>
-        <div className="flex-1 overflow-y-auto p-4">
-          <div className="grid grid-cols-2 gap-3">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="rounded-2xl bg-cream-50 border border-cream-100 overflow-hidden flex flex-col animate-pulse">
-                <div className="h-28 bg-cream-200" />
-                <div className="p-2.5 flex flex-col gap-2">
-                  <div className="h-3 bg-cream-200 rounded w-4/5" />
-                  <div className="h-3 bg-cream-200 rounded w-3/5" />
-                  <div className="h-6 bg-cream-100 rounded-lg mt-1" />
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
+export default function RightPane({ products, onAddToCart, selectedProduct, setSelectedProduct }) {
   if (!products || products.length === 0) {
     return (
       <div className="h-full flex flex-col items-center justify-center text-center p-8 bg-cream-50/50">
@@ -38,7 +9,7 @@ export default function RightPane({ products, onAddToCart, selectedProduct, setS
         </div>
         <h3 className="font-display text-xl text-charcoal font-semibold">Product Catalog</h3>
         <p className="text-sm text-charcoal/60 max-w-sm mt-2">
-          Describe your situation or tell me what you're looking for — matching products will appear here automatically.
+          Ask me to search for gifts, cakes, flowers, or chocolates! Suitable options will appear here dynamically.
         </p>
       </div>
     );
@@ -133,17 +104,9 @@ export default function RightPane({ products, onAddToCart, selectedProduct, setS
       {/* Header */}
       <div className="shrink-0 border-b border-cream-200 p-4 flex items-center justify-between">
         <h2 className="font-display font-bold text-charcoal text-base">Suitable Products</h2>
-        <div className="flex items-center gap-2">
-          {isSearching && (
-            <span className="flex items-center gap-1 text-xs font-medium text-teal">
-              <span className="w-1.5 h-1.5 rounded-full bg-teal animate-ping inline-block" />
-              Updating…
-            </span>
-          )}
-          <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-teal/10 text-teal">
-            {products.length} {products.length === 1 ? "item" : "items"} found
-          </span>
-        </div>
+        <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-teal/10 text-teal">
+          {products.length} {products.length === 1 ? "item" : "items"} found
+        </span>
       </div>
 
       {/* Grid List */}

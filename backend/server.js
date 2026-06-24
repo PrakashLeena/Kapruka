@@ -3,13 +3,8 @@ import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
 
-// Guard: fileURLToPath can throw in some serverless bundlers
-try {
-  const __dirname = path.dirname(fileURLToPath(import.meta.url));
-  dotenv.config({ path: path.resolve(__dirname, ".env") });
-} catch {
-  // Running in a serverless/bundled environment — env vars come from the platform
-}
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.resolve(__dirname, ".env") });
 
 import express from "express";
 import cors from "cors";
@@ -251,92 +246,6 @@ async function getOpenAiTools() {
   }));
 }
 
-// ---------------------------------------------------------------------------
-// Parallel background product search
-// Extracts up to 2 search keywords from the raw user message using a
-// heuristic keyword map (no extra API call needed). If the AI's own tool
-// use finds products those take priority; these results are only used as
-// a fallback to ensure the catalog is never blank on first contact.
-// ---------------------------------------------------------------------------
-
-const SITUATION_MAP = [
-  // Apology / relationship
-  { rx: /upset|angry|fight|argue|apolog|sorry|forgive|mad|kadura|kaduwela|husbandan|wahini/i, terms: ["flowers", "chocolates"] },
-  // Birthday
-  { rx: /birthday|born|upandina|upadina|pirandha/i, terms: ["birthday cake", "birthday gift"] },
-  // Anniversary / love
-  { rx: /anniversar|valentine|love|romance|darling|sweetheart/i, terms: ["flowers", "jewelry"] },
-  // Get well / sick
-  { rx: /sick|ill|hospital|recover|get well|unwell/i, terms: ["fruit basket", "get well soon"] },
-  // New Year / Avurudu
-  { rx: /avurudu|new year|sinhala.*new|aluth.*avurudu/i, terms: ["new year gift", "hamper"] },
-  // Graduation / congratulations
-  { rx: /graduat|congrat|pass|exam|promot/i, terms: ["gift hamper", "chocolates"] },
-  // Baby / newborn
-  { rx: /baby|newborn|born|infant|pregnant/i, terms: ["baby gift", "soft toy"] },
-  // Wedding
-  { rx: /wedding|married|bride|groom|nuptial/i, terms: ["wedding gift", "flowers"] },
-  // Mother / father
-  { rx: /mother|mom|amma|father|dad|thatha/i, terms: ["flowers", "gift hamper"] },
-  // Children / kids
-  { rx: /child|kid|son|daughter|putha|duwee/i, terms: ["toy", "kids gift"] },
-  // Chocolate / sweets generic
-  { rx: /chocolate|sweet|candy|cake/i, terms: ["chocolates"] },
-  // Flowers generic
-  { rx: /flower|rose|bouquet|puspaya/i, terms: ["flowers"] },
-  // Delivery explicit
-  { rx: /deliver|send|post|courier/i, terms: ["gift hamper"] },
-  // Festival
-  { rx: /vesak|deepavali|diwali|christmas|eid|poya/i, terms: ["festival gift", "hamper"] },
-];
-
-function extractSearchKeywords(message) {
-  const matched = [];
-  for (const { rx, terms } of SITUATION_MAP) {
-    if (rx.test(message)) {
-      for (const t of terms) {
-        if (!matched.includes(t)) matched.push(t);
-      }
-      if (matched.length >= 2) break;
-    }
-  }
-  // Also pick any explicit short word groups (2-3 consecutive words) if nothing matched
-  if (matched.length === 0) {
-    const clean = message.replace(/[^a-zA-Z\s]/g, " ").trim();
-    const words = clean.split(/\s+/).filter(w => w.length > 3);
-    if (words.length > 0) matched.push(words.slice(0, 3).join(" "));
-  }
-  return matched.slice(0, 2);
-}
-
-async function parallelProductSearch(message) {
-  const keywords = extractSearchKeywords(message);
-  if (keywords.length === 0) return [];
-
-  const searchTool = mcpTools.find(t => t.name === "kapruka_search_products");
-  if (!searchTool) return [];
-
-  const results = await Promise.allSettled(
-    keywords.map(kw =>
-      callMcp(KAPRUKA_MCP_URL, "tools/call", {
-        name: "kapruka_search_products",
-        arguments: { query: kw }
-      })
-    )
-  );
-
-  const products = [];
-  const orderRef = { value: null };
-  for (let i = 0; i < results.length; i++) {
-    if (results[i].status === "fulfilled") {
-      processToolResponse("kapruka_search_products", results[i].value, products, orderRef);
-    } else {
-      console.warn(`Parallel search for "${keywords[i]}" failed:`, results[i].reason?.message);
-    }
-  }
-  return products;
-}
-
 // Process and extract product/order data from tool call response
 function processToolResponse(toolName, responseData, products, orderRef) {
   if (!responseData) return;
@@ -356,8 +265,6 @@ function processToolResponse(toolName, responseData, products, orderRef) {
   } catch {
     return; // Not JSON
   }
-
-  if (!parsed || typeof parsed !== "object") return;
 
   const items = Array.isArray(parsed) ? parsed : parsed.results ?? parsed.products ?? [parsed];
 
@@ -441,14 +348,6 @@ app.post("/chat", async (req, res) => {
     const products = [];
     const orderRef = { value: null };
 
-    // Fire parallel background product search immediately (safety net).
-    // This resolves while the AI is thinking so the catalog never stays blank
-    // when the user describes a situation rather than naming a product.
-    const parallelSearchPromise = parallelProductSearch(message).catch(err => {
-      console.warn("Parallel search rejected:", err.message);
-      return [];
-    });
-
     // Max 10 sequential tool calls per user interaction loop
     for (let loop = 0; loop < 10; loop++) {
       const requestBody = {
@@ -525,19 +424,7 @@ app.post("/chat", async (req, res) => {
       history.push({ role: "assistant", content: text });
       trimHistory(history);
 
-      // If the AI's own tool calls found products, use those (they're more
-      // contextually accurate). Otherwise fall back to the parallel search.
-      let finalProducts = products;
-      if (finalProducts.length === 0) {
-        try {
-          const parallelProducts = await parallelSearchPromise;
-          finalProducts = parallelProducts;
-        } catch (err) {
-          console.warn("Parallel search error (non-fatal):", err.message);
-        }
-      }
-
-      return res.json({ text, products: finalProducts, order: orderRef.value });
+      return res.json({ text, products, order: orderRef.value });
     }
 
     // Loop limit exceeded
