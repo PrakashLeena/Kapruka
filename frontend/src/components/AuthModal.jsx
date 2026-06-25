@@ -114,7 +114,7 @@ export default function AuthModal({ isOpen, onClose }) {
             </svg>
           </button>
 
-          <div className="w-14 h-14 bg-terracotta rounded-full flex items-center justify-center mx-auto mb-3 font-display font-bold text-2xl shadow-lg">
+          <div className="w-14 h-14 bg-gold text-charcoal rounded-full flex items-center justify-center mx-auto mb-3 font-display font-bold text-2xl shadow-lg">
             K
           </div>
           <h2 className="font-display text-xl font-bold">

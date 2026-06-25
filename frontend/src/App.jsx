@@ -233,7 +233,7 @@ export default function App() {
             </svg>
           </button>
 
-          <div className="w-9 h-9 rounded-full bg-terracotta flex items-center justify-center font-display font-semibold">
+          <div className="w-9 h-9 rounded-full bg-gold text-charcoal flex items-center justify-center font-display font-bold">
             K
           </div>
           <div>
@@ -252,7 +252,7 @@ export default function App() {
                 className="w-7 h-7 rounded-full border-2 border-white/30"
               />
             ) : (
-              <div className="w-7 h-7 rounded-full bg-terracotta flex items-center justify-center text-xs font-bold">
+              <div className="w-7 h-7 rounded-full bg-gold text-charcoal flex items-center justify-center text-xs font-bold">
                 {(firebaseUser.displayName || firebaseUser.email || "U").substring(0, 1).toUpperCase()}
               </div>
             )}
@@ -287,7 +287,7 @@ export default function App() {
         >
           Product Catalog
           {currentProducts.length > 0 && (
-            <span className="ml-2 px-1.5 py-0.5 text-[9px] font-bold rounded-full bg-terracotta text-white">
+            <span className="ml-2 px-1.5 py-0.5 text-[9px] font-bold rounded-full bg-gold text-charcoal">
               {currentProducts.length}
             </span>
           )}
@@ -312,7 +312,7 @@ export default function App() {
           activeTab === "chat" ? "flex" : "hidden md:flex"
         }`}>
           {/* Messages */}
-          <main ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-5">
+          <main ref={scrollRef} className="flex-1 overflow-y-auto px-3 sm:px-4 py-4 sm:py-5">
             <div className="max-w-2xl mx-auto flex flex-col gap-4">
               {messages.length === 0 && (
                 <div className="text-center py-10 flex flex-col items-center gap-5">
@@ -363,7 +363,7 @@ export default function App() {
           </main>
 
           {/* Input bar */}
-          <form onSubmit={handleSubmit} className="shrink-0 border-t border-cream-200 bg-cream-50 p-3">
+          <form onSubmit={handleSubmit} className="shrink-0 border-t border-cream-200 bg-cream-50 p-2.5 sm:p-3">
             <div className="max-w-2xl mx-auto flex items-center gap-2">
               <input
                 value={input}
