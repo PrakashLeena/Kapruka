@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { signInWithGoogle, signInWithEmail, signUpWithEmail } from "../firebase.js";
+import kaprukaLogo from "../kapruka_com_logo.jpg";
 
 export default function AuthModal({ isOpen, onClose }) {
   const [mode, setMode] = useState("login"); // "login" | "signup"
@@ -114,8 +115,8 @@ export default function AuthModal({ isOpen, onClose }) {
             </svg>
           </button>
 
-          <div className="w-14 h-14 bg-gold text-charcoal rounded-full flex items-center justify-center mx-auto mb-3 font-display font-bold text-2xl shadow-lg">
-            K
+          <div className="w-14 h-14 bg-white rounded-full overflow-hidden flex items-center justify-center mx-auto mb-3 shadow-lg">
+            <img src={kaprukaLogo} alt="Kapruka Logo" className="w-full h-full object-cover" />
           </div>
           <h2 className="font-display text-xl font-bold">
             {mode === "login" ? "Welcome back!" : "Create account"}

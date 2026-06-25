@@ -4,6 +4,7 @@ import TypingIndicator from "./components/TypingIndicator.jsx";
 import RightPane from "./components/RightPane.jsx";
 import ChatSidebar from "./components/ChatSidebar.jsx";
 import { onAuthChange } from "./firebase.js";
+import kaprukaLogo from "./kapruka_com_logo.jpg";
 
 const BACKEND_URL = (
   import.meta.env.VITE_BACKEND_URL !== undefined
@@ -233,8 +234,8 @@ export default function App() {
             </svg>
           </button>
 
-          <div className="w-9 h-9 rounded-full bg-gold text-charcoal flex items-center justify-center font-display font-bold">
-            K
+          <div className="w-9 h-9 rounded-full bg-white overflow-hidden flex items-center justify-center shadow-inner">
+            <img src={kaprukaLogo} alt="Kapruka Logo" className="w-full h-full object-cover" />
           </div>
           <div>
             <h1 className="font-display text-lg leading-tight">Kapu</h1>
