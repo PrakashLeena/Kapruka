@@ -206,7 +206,7 @@ export default function App() {
   // Show a loading spinner while Firebase resolves initial auth state
   if (firebaseUser === undefined) {
     return (
-      <div className="h-screen flex items-center justify-center bg-cream-50">
+      <div className="h-dvh flex items-center justify-center bg-cream-50">
         <div className="flex flex-col items-center gap-3 text-charcoal/60">
           <div className="w-10 h-10 border-4 border-teal border-t-transparent rounded-full animate-spin" />
           <p className="text-sm">Loading Kapu...</p>
@@ -216,7 +216,7 @@ export default function App() {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-cream-50 overflow-hidden">
+    <div className="h-dvh flex flex-col bg-cream-50 overflow-hidden">
       {/* Header */}
       <header className="shrink-0 bg-teal text-white px-5 py-4 flex items-center justify-between shadow-sm">
         <div className="flex items-center gap-3">
