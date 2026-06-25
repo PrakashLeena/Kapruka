@@ -19,6 +19,10 @@ const KAPRUKA_MCP_URL = process.env.KAPRUKA_MCP_URL || "https://mcp.kapruka.com/
 const ALLOWED_ORIGIN = (process.env.ALLOWED_ORIGIN || "http://localhost:5173").replace(/\/$/, "");
 const MONGODB_URI = process.env.MONGODB_URI;
 
+// Keep-Alive HTTP/HTTPS agents to optimize MCP latency by reusing TCP/TLS connections
+const keepAliveHttpAgent = new http.Agent({ keepAlive: true, keepAliveMsecs: 10000 });
+const keepAliveHttpsAgent = new https.Agent({ keepAlive: true, keepAliveMsecs: 10000 });
+
 if (!process.env.NVIDIA_API_KEY) {
   console.warn("WARNING: NVIDIA_API_KEY is not set in the environment variables.");
 }
@@ -150,7 +154,8 @@ function mcpPost(baseUrl, payload, sessionId) {
       port: urlObj.port || (urlObj.protocol === "https:" ? 443 : 80),
       path: urlObj.pathname + urlObj.search,
       method: "POST",
-      headers
+      headers,
+      agent: urlObj.protocol === "https:" ? keepAliveHttpsAgent : keepAliveHttpAgent
     };
 
     const finish = (res, body) => {
@@ -625,11 +630,12 @@ app.post("/chat", async (req, res) => {
       currentMessages.push(assistantMessage);
 
       if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
-        for (const toolCall of assistantMessage.tool_calls) {
+        // Execute all tool calls requested in this turn in parallel to reduce backend latency
+        const toolPromises = assistantMessage.tool_calls.map(async (toolCall) => {
           const toolName = toolCall.function.name;
           const toolArgs = JSON.parse(toolCall.function.arguments);
 
-          console.log(`Executing tool ${toolName} with args:`, toolArgs);
+          console.log(`Executing tool ${toolName} in parallel with args:`, toolArgs);
           
           // Wrap flat arguments into a nested 'params' object if needed
           let finalArgs = toolArgs;
@@ -660,13 +666,16 @@ app.post("/chat", async (req, res) => {
             };
           }
 
-          currentMessages.push({
+          return {
             role: "tool",
             tool_call_id: toolCall.id,
             name: toolName,
             content: JSON.stringify(toolResult),
-          });
-        }
+          };
+        });
+
+        const toolResponses = await Promise.all(toolPromises);
+        currentMessages.push(...toolResponses);
         continue;
       }
 
