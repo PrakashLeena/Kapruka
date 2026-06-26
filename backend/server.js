@@ -23,12 +23,29 @@ const MONGODB_URI = process.env.MONGODB_URI;
 const keepAliveHttpAgent = new http.Agent({ keepAlive: true, keepAliveMsecs: 10000 });
 const keepAliveHttpsAgent = new https.Agent({ keepAlive: true, keepAliveMsecs: 10000 });
 
-// ─── In-Memory MCP Response Cache ─────────────────────────────────────────────
+// ─── MongoDB-backed MCP Response Cache with In-Memory Fallback ────────────────
 // Caches read-only tool responses (search, categories, delivery checks) to avoid
-// redundant round-trips to the Kapruka MCP server within a short window.
-const mcpCache = new Map();
+// redundant round-trips to the Kapruka MCP server. Stored in MongoDB so it persists
+// across serverless cold starts.
+const mcpCache = new Map(); // in-memory fallback
 
-function getCached(key) {
+async function getCached(key) {
+  if (db) {
+    try {
+      const entry = await db.collection("mcp_cache").findOne({ key });
+      if (entry) {
+        if (Date.now() > entry.expires) {
+          await db.collection("mcp_cache").deleteOne({ key });
+          return null;
+        }
+        return entry.value;
+      }
+    } catch (err) {
+      console.error("Error reading cache from MongoDB:", err.message);
+    }
+  }
+
+  // Fallback to in-memory cache
   const entry = mcpCache.get(key);
   if (!entry) return null;
   if (Date.now() > entry.expires) {
@@ -38,11 +55,26 @@ function getCached(key) {
   return entry.value;
 }
 
-function setCache(key, value, ttlMs) {
-  mcpCache.set(key, { value, expires: Date.now() + ttlMs });
+async function setCache(key, value, ttlMs) {
+  const expires = Date.now() + ttlMs;
+  if (db) {
+    try {
+      await db.collection("mcp_cache").updateOne(
+        { key },
+        { $set: { value, expires, expiresAt: new Date(expires) } },
+        { upsert: true }
+      );
+      return;
+    } catch (err) {
+      console.error("Error writing cache to MongoDB:", err.message);
+    }
+  }
+
+  // Fallback to in-memory cache
+  mcpCache.set(key, { value, expires });
 }
 
-// Evict stale entries every minute to prevent unbounded memory growth
+// Evict stale in-memory entries every minute to prevent unbounded fallback memory growth
 setInterval(() => {
   const now = Date.now();
   for (const [key, entry] of mcpCache) {
@@ -83,6 +115,9 @@ async function connectMongo() {
     // Create index for quick lookup by sessionId/userId and sorting by date
     await db.collection("chat_sessions").createIndex({ userId: 1, updatedAt: -1 });
     await db.collection("chat_sessions").createIndex({ createdAt: -1 });
+    // Create index for cache lookup and TTL expiration
+    await db.collection("mcp_cache").createIndex({ key: 1 }, { unique: true });
+    await db.collection("mcp_cache").createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
     console.log("✅ Connected to MongoDB Atlas");
     return db;
   } catch (err) {
@@ -337,13 +372,13 @@ async function callMcp(baseUrl, method, params = {}) {
 async function callMcpCached(baseUrl, toolName, toolArgs) {
   if (isToolCacheable(toolName)) {
     const cacheKey = `${toolName}:${JSON.stringify(toolArgs)}`;
-    const hit = getCached(cacheKey);
+    const hit = await getCached(cacheKey);
     if (hit) {
       console.log(`[cache HIT] ${toolName}`);
       return hit;
     }
     const result = await callMcp(baseUrl, "tools/call", { name: toolName, arguments: toolArgs });
-    setCache(cacheKey, result, MCP_TOOL_CACHE_TTL);
+    await setCache(cacheKey, result, MCP_TOOL_CACHE_TTL);
     return result;
   }
   // Non-cacheable write tool — call directly
