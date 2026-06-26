@@ -11,7 +11,7 @@ import cors from "cors";
 import https from "https";
 import http from "http";
 import { MongoClient } from "mongodb";
-import { SYSTEM_PROMPT } from "./systemPrompt.js";
+import { buildSystemPrompt } from "./systemPrompt.js";
 
 const PORT = process.env.PORT || 3000;
 const MODEL = process.env.CLAUDE_MODEL || "z-ai/glm-5.1";
@@ -22,6 +22,45 @@ const MONGODB_URI = process.env.MONGODB_URI;
 // Keep-Alive HTTP/HTTPS agents to optimize MCP latency by reusing TCP/TLS connections
 const keepAliveHttpAgent = new http.Agent({ keepAlive: true, keepAliveMsecs: 10000 });
 const keepAliveHttpsAgent = new https.Agent({ keepAlive: true, keepAliveMsecs: 10000 });
+
+// ─── In-Memory MCP Response Cache ─────────────────────────────────────────────
+// Caches read-only tool responses (search, categories, delivery checks) to avoid
+// redundant round-trips to the Kapruka MCP server within a short window.
+const mcpCache = new Map();
+
+function getCached(key) {
+  const entry = mcpCache.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.expires) {
+    mcpCache.delete(key);
+    return null;
+  }
+  return entry.value;
+}
+
+function setCache(key, value, ttlMs) {
+  mcpCache.set(key, { value, expires: Date.now() + ttlMs });
+}
+
+// Evict stale entries every minute to prevent unbounded memory growth
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of mcpCache) {
+    if (now > entry.expires) mcpCache.delete(key);
+  }
+}, 60_000);
+
+const MCP_TOOL_CACHE_TTL = 2 * 60 * 1000; // 2 minutes
+
+/**
+ * Returns true if the tool is safe to cache (read-only, no side effects).
+ * Excludes any tool whose name suggests it creates, modifies, or places orders.
+ */
+function isToolCacheable(toolName) {
+  const writePhrases = ["create", "order", "checkout", "add", "remove", "update", "delete", "place", "submit", "purchase"];
+  const lower = toolName.toLowerCase();
+  return !writePhrases.some((p) => lower.includes(p));
+}
 
 if (!process.env.NVIDIA_API_KEY) {
   console.warn("WARNING: NVIDIA_API_KEY is not set in the environment variables.");
@@ -289,6 +328,26 @@ async function callMcp(baseUrl, method, params = {}) {
   }
 
   return response.json?.result;
+}
+
+/**
+ * Wrapper around callMcp("tools/call") that caches responses for read-only tools.
+ * Write tools (create order, etc.) bypass the cache entirely.
+ */
+async function callMcpCached(baseUrl, toolName, toolArgs) {
+  if (isToolCacheable(toolName)) {
+    const cacheKey = `${toolName}:${JSON.stringify(toolArgs)}`;
+    const hit = getCached(cacheKey);
+    if (hit) {
+      console.log(`[cache HIT] ${toolName}`);
+      return hit;
+    }
+    const result = await callMcp(baseUrl, "tools/call", { name: toolName, arguments: toolArgs });
+    setCache(cacheKey, result, MCP_TOOL_CACHE_TTL);
+    return result;
+  }
+  // Non-cacheable write tool — call directly
+  return callMcp(baseUrl, "tools/call", { name: toolName, arguments: toolArgs });
 }
 
 // Dynamically loaded MCP tools
@@ -583,7 +642,7 @@ app.post("/chat", async (req, res) => {
     }
 
     let currentMessages = [
-      { role: "system", content: SYSTEM_PROMPT },
+      { role: "system", content: buildSystemPrompt() },
       ...history
     ];
 
@@ -653,10 +712,7 @@ app.post("/chat", async (req, res) => {
 
           let toolResult;
           try {
-            toolResult = await callMcp(KAPRUKA_MCP_URL, "tools/call", {
-              name: toolName,
-              arguments: finalArgs,
-            });
+            toolResult = await callMcpCached(KAPRUKA_MCP_URL, toolName, finalArgs);
             processToolResponse(toolName, toolResult, products, orderRef);
           } catch (err) {
             console.error(`Error calling tool ${toolName}:`, err.message);
@@ -698,6 +754,255 @@ app.post("/chat", async (req, res) => {
     history.pop();
     res.status(500).json({ error: "Something went wrong on our end." });
   }
+});
+
+// ─── SSE Streaming Helpers ───────────────────────────────────────────────────
+
+/**
+ * Async generator that calls the NVIDIA API with stream:true and yields
+ * parsed JSON chunks. Handles SSE framing internally.
+ */
+async function* streamLLMCall(messages, tools) {
+  const requestBody = {
+    model: MODEL,
+    messages,
+    temperature: 0.2,
+    top_p: 1,
+    stream: true,
+  };
+  if (tools && tools.length > 0) requestBody.tools = tools;
+
+  const response = await fetch(`${process.env.NVIDIA_BASE_URL}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${process.env.NVIDIA_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(requestBody),
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`NVIDIA API error: ${response.status} — ${errText}`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop(); // retain incomplete last line
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed === ":" || !trimmed.startsWith("data: ")) continue;
+        const data = trimmed.slice(6);
+        if (data === "[DONE]") return;
+        try {
+          yield JSON.parse(data);
+        } catch {
+          // malformed chunk — skip
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+// ─── Streaming Chat Endpoint ──────────────────────────────────────────────────
+/**
+ * POST /chat/stream
+ * Identical logic to POST /chat but streams the final LLM response back to
+ * the client as Server-Sent Events so text appears token-by-token.
+ *
+ * SSE event types emitted:
+ *   { type: "delta",    text: "..." }   — text chunk (stream to bubble)
+ *   { type: "products", data: [...] }   — product cards to display
+ *   { type: "order",    data: {...} }   — checkout pay-link card
+ *   { type: "done" }                    — stream complete
+ *   { type: "error",    message: "..." } — fatal error
+ */
+app.post("/chat/stream", async (req, res) => {
+  if (!process.env.NVIDIA_API_KEY) {
+    return res.status(500).json({ error: "NVIDIA_API_KEY is not configured on the server." });
+  }
+
+  // ── SSE headers ────────────────────────────────────────────────────────────
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no"); // disable nginx/Vercel proxy buffering
+  if (res.socket) {
+    res.socket.setTimeout(0);
+    res.socket.setNoDelay(true);
+  }
+  res.flushHeaders();
+
+  const emit = (obj) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
+
+  const { sessionId, message, userId } = req.body ?? {};
+
+  if (!sessionId || typeof sessionId !== "string") {
+    emit({ type: "error", message: "Missing sessionId" });
+    return res.end();
+  }
+  if (!message || typeof message !== "string" || !message.trim()) {
+    emit({ type: "error", message: "Missing message" });
+    return res.end();
+  }
+
+  const history = await getHistory(sessionId, userId);
+  const isFirstMessage = history.length === 0;
+  const firstUserMessage = isFirstMessage ? message : null;
+
+  history.push({ role: "user", content: message });
+
+  try {
+    const openAiTools = await getOpenAiTools();
+    if (openAiTools.length === 0) {
+      history.pop();
+      emit({ type: "error", message: "The shopping catalog is currently offline. Please check the Kapruka MCP connection." });
+      return res.end();
+    }
+
+    let currentMessages = [
+      { role: "system", content: buildSystemPrompt() },
+      ...history,
+    ];
+
+    const products = [];
+    const orderRef = { value: null };
+
+    // ── Agentic loop (max 10 turns) ──────────────────────────────────────────
+    for (let loop = 0; loop < 10; loop++) {
+      // Accumulate the full response from the streamed chunks
+      let fullContent = "";
+      const toolCallsMap = {}; // index → partial tool call object
+      let hasToolCalls = false;
+
+      for await (const chunk of streamLLMCall(currentMessages, openAiTools)) {
+        const delta = chunk.choices?.[0]?.delta;
+        if (!delta) continue;
+
+        // ── Text delta: stream immediately to client ──────────────────────
+        if (delta.content) {
+          fullContent += delta.content;
+          emit({ type: "delta", text: delta.content });
+        }
+
+        // ── Tool call delta: accumulate silently (don't stream to client) ─
+        if (delta.tool_calls) {
+          hasToolCalls = true;
+          for (const tc of delta.tool_calls) {
+            const idx = tc.index;
+            if (!toolCallsMap[idx]) {
+              toolCallsMap[idx] = {
+                id: tc.id || "",
+                type: "function",
+                function: { name: "", arguments: "" },
+              };
+            }
+            if (tc.id) toolCallsMap[idx].id = tc.id;
+            if (tc.function?.name) toolCallsMap[idx].function.name += tc.function.name;
+            if (tc.function?.arguments) toolCallsMap[idx].function.arguments += tc.function.arguments;
+          }
+        }
+      }
+
+      const toolCalls = Object.values(toolCallsMap).filter(Boolean);
+
+      // Build and append the assistant message for this turn
+      const assistantMessage = { role: "assistant", content: fullContent || null };
+      if (hasToolCalls && toolCalls.length > 0) {
+        assistantMessage.tool_calls = toolCalls;
+      }
+      currentMessages.push(assistantMessage);
+
+      // ── Tool-calling turn: execute tools, continue loop ──────────────────
+      if (hasToolCalls && toolCalls.length > 0) {
+        const toolPromises = toolCalls.map(async (toolCall) => {
+          const toolName = toolCall.function.name;
+          let toolArgs;
+          try {
+            toolArgs = JSON.parse(toolCall.function.arguments);
+          } catch {
+            toolArgs = {};
+          }
+
+          console.log(`[stream] Executing tool ${toolName} with args:`, toolArgs);
+
+          // Wrap flat args into nested params object if the schema requires it
+          let finalArgs = toolArgs;
+          const toolMeta = mcpTools.find((t) => t.name === toolName);
+          if (toolMeta?.inputSchema?.required?.includes("params") && !toolArgs.params) {
+            finalArgs = { params: toolArgs };
+          }
+
+          // Force JSON response format for structured product lists
+          if (finalArgs.params) {
+            finalArgs.params.response_format = "json";
+          } else {
+            finalArgs.response_format = "json";
+          }
+
+          let toolResult;
+          try {
+            toolResult = await callMcpCached(KAPRUKA_MCP_URL, toolName, finalArgs);
+            processToolResponse(toolName, toolResult, products, orderRef);
+          } catch (err) {
+            console.error(`[stream] Error calling tool ${toolName}:`, err.message);
+            toolResult = {
+              content: [{ type: "text", text: `Error calling tool: ${err.message}` }],
+              isError: true,
+            };
+          }
+
+          return {
+            role: "tool",
+            tool_call_id: toolCall.id,
+            name: toolName,
+            content: JSON.stringify(toolResult),
+          };
+        });
+
+        const toolResponses = await Promise.all(toolPromises);
+        currentMessages.push(...toolResponses);
+        continue; // next agentic loop iteration
+      }
+
+      // ── Final text turn: persist + emit metadata + close stream ──────────
+      history.push({ role: "assistant", content: fullContent });
+      trimHistory(history);
+      await saveHistory(sessionId, history, firstUserMessage, userId);
+
+      if (products.length > 0) emit({ type: "products", data: products });
+      if (orderRef.value) emit({ type: "order", data: orderRef.value });
+      emit({ type: "done" });
+      return res.end();
+    }
+
+    // Loop limit exceeded
+    history.pop();
+    emit({ type: "error", message: "Tool execution loop limit exceeded." });
+    res.end();
+  } catch (err) {
+    console.error("Unexpected error in /chat/stream:", err);
+    history.pop();
+    emit({ type: "error", message: "Something went wrong on our end." });
+    res.end();
+  }
+});
+
+// ─── Warmup Endpoint (used by Vercel cron to prevent cold starts) ─────────────
+app.get("/warmup", (_req, res) => {
+  res.json({ ok: true, warmedAt: new Date().toISOString() });
 });
 
 // ─── Server Start ─────────────────────────────────────────────────────────────

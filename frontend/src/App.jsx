@@ -149,53 +149,104 @@ export default function App() {
 
     setMessages((prev) => [...prev, { role: "user", text: trimmed }]);
     setInput("");
-    setLoading(true);
+    setLoading(true); // show TypingIndicator during tool-call phase
+
+    // Unique key used to locate the streaming assistant bubble
+    const streamKey = `stream_${Date.now()}`;
+    let assistantBubbleAdded = false;
 
     try {
-      const res = await fetch(`${BACKEND_URL}/chat`, {
+      const res = await fetch(`${BACKEND_URL}/chat/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           sessionId: activeChatId,
           message: trimmed,
-          userId: userId,
+          userId,
         }),
       });
 
       if (!res.ok) throw new Error("Request failed");
-      const data = await res.json();
 
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          text: data.text || "Sorry, I didn't quite catch that - could you say it differently?",
-          products: data.products ?? [],
-          order: data.order ?? null,
-        },
-      ]);
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
 
-      if (data.products && data.products.length > 0) {
-        setCurrentProducts(data.products);
-        setSelectedProduct(null);
-        setActiveTab("products");
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop(); // retain any incomplete last line
+
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          let event;
+          try { event = JSON.parse(line.slice(6)); } catch { continue; }
+
+          if (event.type === "delta") {
+            if (!assistantBubbleAdded) {
+              // First text token: hide TypingIndicator, create message bubble
+              setLoading(false);
+              setMessages((prev) => [
+                ...prev,
+                { role: "assistant", text: event.text, streaming: true, products: [], order: null, _key: streamKey },
+              ]);
+              assistantBubbleAdded = true;
+            } else {
+              // Subsequent tokens: append to the bubble
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m._key === streamKey ? { ...m, text: m.text + event.text } : m
+                )
+              );
+            }
+          } else if (event.type === "products") {
+            if (event.data?.length > 0) {
+              setCurrentProducts(event.data);
+              setSelectedProduct(null);
+              setActiveTab("products");
+            }
+          } else if (event.type === "order") {
+            setMessages((prev) =>
+              prev.map((m) => (m._key === streamKey ? { ...m, order: event.data } : m))
+            );
+          } else if (event.type === "done") {
+            // Mark streaming complete (removes blinking cursor)
+            setMessages((prev) =>
+              prev.map((m) => (m._key === streamKey ? { ...m, streaming: false } : m))
+            );
+            fetchChats();
+          } else if (event.type === "error") {
+            throw new Error(event.message || "Stream error");
+          }
+        }
       }
-
-      // Refresh chat sidebar to display updated titles/sessions
-      fetchChats();
     } catch (err) {
       console.error(err);
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          text: err.message || "Hmm, something went wrong on my end. Mind trying that again?",
-          products: [],
-          order: null,
-        },
-      ]);
+      const errText = err.message || "Hmm, something went wrong on my end. Mind trying that again?";
+      if (assistantBubbleAdded) {
+        // Append error note to the partially-streamed bubble
+        setMessages((prev) =>
+          prev.map((m) =>
+            m._key === streamKey ? { ...m, text: m.text || errText, streaming: false } : m
+          )
+        );
+      } else {
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", text: errText, products: [], order: null },
+        ]);
+      }
     } finally {
       setLoading(false);
+      // Ensure streaming flag is cleared even if done event was missed
+      if (assistantBubbleAdded) {
+        setMessages((prev) =>
+          prev.map((m) => (m._key === streamKey ? { ...m, streaming: false } : m))
+        );
+      }
     }
   }
 

@@ -5,10 +5,59 @@
 // the agent feel like it "understands" a customer instead of just running
 // keyword search. Tune this file more than any other.
 
-export const SYSTEM_PROMPT = `
+/**
+ * Returns upcoming Sri Lankan occasions for the given month (1-12).
+ */
+function getUpcomingOccasions(month) {
+  const map = {
+    1:  ["Thai Pongal (Jan 14)", "Duruthu Poya"],
+    2:  ["Navam Poya", "Valentine's Day (Feb 14)"],
+    3:  ["Medin Poya", "International Women's Day (Mar 8)"],
+    4:  ["Sinhala & Tamil New Year / Avurudu (Apr 13–14)", "Bak Poya", "Good Friday / Easter"],
+    5:  ["Vesak Full Moon Poya (Buddha's Birthday)", "Mother's Day"],
+    6:  ["Poson Poya"],
+    7:  ["Esala Poya"],
+    8:  ["Nikini Poya"],
+    9:  ["Binara Poya"],
+    10: ["Vap Poya", "Deepavali"],
+    11: ["Il Poya", "Remembrance Day"],
+    12: ["Unduvap Poya", "Christmas (Dec 25)", "New Year's Eve (Dec 31)"],
+  };
+  const list = map[month] || [];
+  return list.length > 0 ? list.join(", ") : "no major occasions this month";
+}
+
+/**
+ * Builds the system prompt with the current date (Colombo time) and
+ * upcoming Sri Lankan occasions injected at runtime.
+ */
+export function buildSystemPrompt() {
+  const now = new Date();
+
+  // Format date in Sri Lanka timezone
+  const dateStr = now.toLocaleDateString("en-US", {
+    timeZone: "Asia/Colombo",
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+
+  const month = parseInt(
+    now.toLocaleString("en-US", { timeZone: "Asia/Colombo", month: "numeric" }),
+    10
+  );
+  const occasions = getUpcomingOccasions(month);
+
+  return `
 You are Kapu, a warm, witty shopping companion for Kapruka, Sri Lanka's
 largest e-commerce platform. You help people figure out what to buy, not
 just search for things they already know the name of.
+
+## Current context
+Today is ${dateStr} (Sri Lanka time).
+Upcoming Sri Lankan occasions this month: ${occasions}.
+Use this to proactively suggest occasion-appropriate gifts without being asked.
 
 ## Who you're talking to
 Sri Lankan customers, shopping for themselves or for people in their life.
@@ -68,6 +117,7 @@ Worked example (use this as a calibration reference, don't repeat it verbatim to
   the customer has confirmed everything (items, recipient, address, date).
 - If a product is a cake, flower, or perishable combo, double check the
   perishable warning kapruka_check_delivery returns and mention it.
+- Prices are in Sri Lankan Rupees (LKR). Never mention USD unless the customer asks.
 
 ## Conversation style
 - Ask ONE short clarifying question at a time. Never a multi-part checklist.
@@ -93,3 +143,4 @@ After creating the order, clearly present the pay link as the next step -
 make it feel like the natural last step of the conversation, not a sudden
 handoff to a different page.
 `.trim();
+}

@@ -22,6 +22,13 @@ export default function ChatMessage({ message, onAddToCart }) {
         {message.text && (
           <div className="bg-white border border-cream-200 border-l-[3px] border-l-teal px-4 py-2.5 rounded-2xl rounded-bl-sm text-sm leading-relaxed">
             {message.text}
+            {/* Blinking cursor shown while the LLM is still streaming tokens */}
+            {message.streaming && (
+              <span
+                className="inline-block w-[2px] h-[1em] bg-teal ml-0.5 align-middle animate-pulse"
+                aria-hidden="true"
+              />
+            )}
           </div>
         )}
         {message.order && <OrderCard order={message.order} />}
