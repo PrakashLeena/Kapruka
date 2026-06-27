@@ -3,6 +3,8 @@ import ChatMessage from "./components/ChatMessage.jsx";
 import TypingIndicator from "./components/TypingIndicator.jsx";
 import RightPane from "./components/RightPane.jsx";
 import ChatSidebar from "./components/ChatSidebar.jsx";
+import VoiceButton from "./components/VoiceButton.jsx";
+import { useVoice } from "./hooks/useVoice.js";
 import { onAuthChange } from "./firebase.js";
 import kaprukaLogo from "./kapruka_com_logo.jpg";
 
@@ -255,6 +257,12 @@ export default function App() {
     sendMessage(input);
   }
 
+  // ── Voice integration ──────────────────────────────────────────────────────
+  // useVoice receives the existing sendMessage() and messages so voice reuses
+  // the exact same chat pipeline. No business logic is duplicated.
+  const { voiceState, startListening, stopAll, error: voiceError, clearError, isSupported: voiceSupported } =
+    useVoice({ sendMessage, messages });
+
   // Show a loading spinner while Firebase resolves initial auth state
   if (firebaseUser === undefined) {
     return (
@@ -423,6 +431,16 @@ export default function App() {
                 placeholder="Type in Sinhala, Tamil, English, or mix it up..."
                 disabled={loading}
                 className="flex-1 bg-white border border-cream-200 rounded-full px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal/40"
+              />
+              {/* Voice button — sits between text input and send button */}
+              <VoiceButton
+                voiceState={voiceState}
+                onStart={startListening}
+                onStop={stopAll}
+                disabled={loading}
+                error={voiceError}
+                onClearError={clearError}
+                isSupported={voiceSupported}
               />
               <button
                 type="submit"
