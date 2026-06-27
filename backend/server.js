@@ -194,7 +194,9 @@ app.use(cors({
       origin.startsWith("http://127.0.0.1:") ||
       origin.startsWith("https://localhost:") ||
       origin.startsWith("https://127.0.0.1:") ||
-      origin === ALLOWED_ORIGIN
+      origin === ALLOWED_ORIGIN ||
+      origin === "https://www.kaprukaai.tech" ||
+      origin === "https://kaprukaai.tech"
     ) {
       callback(null, true);
     } else {
