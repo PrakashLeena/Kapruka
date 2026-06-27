@@ -44,56 +44,78 @@ function _stripMarkdown(text) {
     .trim();
 }
 
+// ── Current language mode (set by useVoice or ChatMessage before speaking) ─────
+// 'english' | 'tamil' | 'sinhala'
+let _currentLang = "english";
+
 /**
- * Pick the best available voice with preference for a Sri Lankan tone,
- * followed by a regional fallback (India), and then international English.
+ * Pick the best available TTS voice for the given language.
+ *
+ * Priority per language:
+ *   tamil   → ta-LK › ta-IN › any "tamil" › en-IN › en-GB › en fallback
+ *   sinhala → si-LK › any "sinhala" › en-IN › en-GB › en fallback
+ *   english → en-LK › en-IN › Google UK Female › Google US › en fallback
+ *
+ * @param {'english'|'tamil'|'sinhala'} [lang]
  * @returns {SpeechSynthesisVoice | null}
  */
-function _pickVoice() {
+function _pickVoice(lang = _currentLang) {
   if (!synth) return null;
   const voices = synth.getVoices();
+  if (!voices.length) return null;
 
-  // 1. Search for Sri Lankan English, Sinhala, or Tamil voices
-  const sriLankanVoice = voices.find((v) => {
-    const lang = v.lang.toLowerCase();
-    const name = v.name.toLowerCase();
-    return (
-      lang.includes("lk") ||
-      name.includes("sri lanka") ||
-      name.includes("lanka") ||
-      lang.startsWith("si")
-    );
-  });
-  if (sriLankanVoice) {
-    console.log("[SpeechPlayer] Selected Sri Lankan voice:", sriLankanVoice.name);
-    return sriLankanVoice;
+  const find = (test) => voices.find(test) || null;
+
+  if (lang === "tamil") {
+    // 1. Native Tamil Sri Lanka
+    const v = find((v) => v.lang === "ta-LK")
+      // 2. Native Tamil India
+      || find((v) => v.lang === "ta-IN")
+      // 3. Any Tamil locale
+      || find((v) => v.lang.startsWith("ta"))
+      // 4. Voice whose name contains "Tamil"
+      || find((v) => v.name.toLowerCase().includes("tamil"))
+      // 5. Indian English (South Indian accent – close to Tamil tone)
+      || find((v) => v.lang === "en-IN")
+      || find((v) => v.lang.startsWith("en-IN"))
+      || find((v) => v.name.toLowerCase().includes("india"))
+      // 6. Any English
+      || find((v) => v.lang.startsWith("en"))
+      || voices[0];
+    console.log("[SpeechPlayer] Tamil voice selected:", v?.name, v?.lang);
+    return v;
   }
 
-  // 2. Fallback to Indian English (en-IN) which is regionally close and widely available
-  const indianVoice = voices.find((v) => {
-    const lang = v.lang.toLowerCase();
-    const name = v.name.toLowerCase();
-    return lang.includes("in") || name.includes("india");
-  });
-  if (indianVoice) {
-    console.log("[SpeechPlayer] Selected regional fallback voice:", indianVoice.name);
-    return indianVoice;
+  if (lang === "sinhala") {
+    // 1. Native Sinhala Sri Lanka
+    const v = find((v) => v.lang === "si-LK")
+      // 2. Any Sinhala locale
+      || find((v) => v.lang.startsWith("si"))
+      // 3. Voice whose name contains "Sinhala" or "Sinhalese"
+      || find((v) => v.name.toLowerCase().includes("sinhala") || v.name.toLowerCase().includes("sinhal"))
+      // 4. Sri Lankan English
+      || find((v) => v.lang === "en-LK")
+      // 5. Indian English (closest regional accent available in most browsers)
+      || find((v) => v.lang === "en-IN")
+      || find((v) => v.name.toLowerCase().includes("india"))
+      // 6. Any English
+      || find((v) => v.lang.startsWith("en"))
+      || voices[0];
+    console.log("[SpeechPlayer] Sinhala voice selected:", v?.name, v?.lang);
+    return v;
   }
 
-  // 3. Standard preferred English voices
-  const preferred = [
-    "Google UK English Female",
-    "Google US English",
-    "Microsoft Zira - English (United States)",
-    "Microsoft David - English (United States)",
-  ];
-  for (const name of preferred) {
-    const v = voices.find((v) => v.name === name);
-    if (v) return v;
-  }
-
-  // Fallback: first English voice, or first voice available
-  return voices.find((v) => v.lang.startsWith("en")) || voices[0] || null;
+  // ── English (default) ──────────────────────────────────────────────────────
+  const v = find((v) => v.lang === "en-LK")
+    || find((v) => v.lang === "en-IN")
+    || find((v) => v.name === "Google UK English Female")
+    || find((v) => v.name === "Google US English")
+    || find((v) => v.name === "Microsoft Zira - English (United States)")
+    || find((v) => v.name === "Microsoft David - English (United States)")
+    || find((v) => v.lang.startsWith("en"))
+    || voices[0];
+  console.log("[SpeechPlayer] English voice selected:", v?.name, v?.lang);
+  return v;
 }
 
 // ── Public API ─────────────────────────────────────────────────────────────────
@@ -116,6 +138,25 @@ export const SpeechPlayerService = {
     return () => {
       _onEndCallbacks.delete(fn);
     };
+  },
+
+  /**
+   * Set the active language for voice selection.
+   * Call this before speak() when you know the language of the content.
+   * @param {'english'|'tamil'|'sinhala'} lang
+   */
+  setLanguage(lang) {
+    if (["english", "tamil", "sinhala"].includes(lang)) {
+      _currentLang = lang;
+    }
+  },
+
+  /**
+   * Get the currently active language.
+   * @returns {'english'|'tamil'|'sinhala'}
+   */
+  getLanguage() {
+    return _currentLang;
   },
 
   /**

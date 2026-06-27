@@ -6,6 +6,7 @@ import ChatSidebar from "./components/ChatSidebar.jsx";
 import VoiceButton from "./components/VoiceButton.jsx";
 import { useVoice } from "./hooks/useVoice.js";
 import { onAuthChange } from "./firebase.js";
+import { detectConversationLanguage } from "./services/LanguageDetector.js";
 import kaprukaLogo from "./kapruka_com_logo.jpg";
 
 const BACKEND_URL = (
@@ -36,6 +37,9 @@ export default function App() {
   const [chats, setChats] = useState([]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("chat"); // "chat" | "products" on mobile
+
+  // Language detected from user messages: 'english' | 'tamil' | 'sinhala'
+  const [conversationLang, setConversationLang] = useState("english");
 
   const scrollRef = useRef(null);
 
@@ -170,7 +174,13 @@ export default function App() {
     const trimmed = text.trim();
     if (!trimmed || loading) return;
 
-    setMessages((prev) => [...prev, { role: "user", text: trimmed }]);
+    // Detect language from this message and update conversation language
+    setMessages((prev) => {
+      const updatedMsgs = [...prev, { role: "user", text: trimmed }];
+      const lang = detectConversationLanguage(updatedMsgs);
+      setConversationLang(lang);
+      return updatedMsgs;
+    });
     setInput("");
     setLoading(true); // show TypingIndicator during tool-call phase
 
@@ -458,6 +468,7 @@ export default function App() {
                 <ChatMessage
                   key={i}
                   message={m}
+                  speakLang={conversationLang}
                   onAddToCart={(product) => sendMessage(`Add ${product.name} to my cart`)}
                 />
               ))}

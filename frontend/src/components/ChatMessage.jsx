@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { SpeechPlayerService } from "../services/SpeechPlayer.js";
 import OrderCard from "./OrderCard.jsx";
 
-export default function ChatMessage({ message, onAddToCart }) {
+export default function ChatMessage({ message, onAddToCart, speakLang = "english" }) {
   const isUser = message.role === "user";
   const [isSpeaking, setIsSpeaking] = useState(false);
 
@@ -26,6 +26,8 @@ export default function ChatMessage({ message, onAddToCart }) {
       SpeechPlayerService.stop();
       setIsSpeaking(false);
     } else {
+      // Set language so the correct Tamil/Sinhala/English voice is used
+      SpeechPlayerService.setLanguage(speakLang);
       SpeechPlayerService.speak(message.text);
       setIsSpeaking(true);
     }

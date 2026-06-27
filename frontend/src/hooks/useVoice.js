@@ -22,6 +22,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { VoiceRecognitionService } from "../services/VoiceRecognition.js";
 import { SpeechPlayerService } from "../services/SpeechPlayer.js";
+import { detectLanguage } from "../services/LanguageDetector.js";
 
 /**
  * @typedef {'idle'|'listening'|'thinking'|'speaking'} VoiceState
@@ -51,6 +52,11 @@ export function useVoice({ sendMessage, messages }) {
       setVoiceState("thinking");
       pendingResponseRef.current = true;
       messagesLengthAtSendRef.current = messagesRef.current.length;
+
+      // Detect language from what the user just said
+      const lang = detectLanguage(transcript);
+      SpeechPlayerService.setLanguage(lang);
+      console.log("[useVoice] Detected language:", lang, "for transcript:", transcript);
 
       // Call the EXACT same sendMessage used by text input
       // Prepend 🎤 so it's visually distinguishable in the chat history
