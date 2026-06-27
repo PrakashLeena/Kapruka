@@ -41,11 +41,23 @@ export default function App() {
 
   // Listen to Firebase auth state changes
   useEffect(() => {
-    const unsubscribe = onAuthChange((user) => {
+    const unsubscribe = onAuthChange(async (user) => {
+      if (user) {
+        // User logged in: migrate guest sessions to user account
+        const storedGuestId = localStorage.getItem("kapruka_guest_id");
+        if (storedGuestId) {
+          try {
+            await fetch(`${BACKEND_URL}/chats/migrate`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ guestId: storedGuestId, userId: user.uid }),
+            });
+          } catch (err) {
+            console.error("Failed to migrate guest chats:", err);
+          }
+        }
+      }
       setFirebaseUser(user); // null if logged out, user object if logged in
-      // When auth changes, reset the chat UI to avoid cross-user data leaking
-      setActiveChatId(crypto.randomUUID());
-      setMessages([]);
       setCurrentProducts([]);
       setSelectedProduct(null);
     });
@@ -66,16 +78,23 @@ export default function App() {
   const userId = firebaseUser?.uid ?? guestId;
 
   // Fetch chat sessions filtered by current user's Firebase uid
-  async function fetchChats() {
-    if (!userId) {
+  async function fetchChats(targetUserId = userId, selectLatest = false) {
+    if (!targetUserId) {
       setChats([]);
       return;
     }
     try {
-      const res = await fetch(`${BACKEND_URL}/chats?userId=${encodeURIComponent(userId)}`);
+      const res = await fetch(`${BACKEND_URL}/chats?userId=${encodeURIComponent(targetUserId)}`);
       if (res.ok) {
         const data = await res.json();
         setChats(data);
+        if (selectLatest && data.length > 0) {
+          // Select the most recent chat session
+          await selectChat(data[0].id, targetUserId);
+        } else if (selectLatest) {
+          // If no previous chats, start a new one
+          handleNewChat();
+        }
       }
     } catch (err) {
       console.error("Failed to fetch chat history list:", err);
@@ -84,20 +103,22 @@ export default function App() {
 
   // Refetch chats when user changes
   useEffect(() => {
-    fetchChats();
-  }, [userId]);
+    if (firebaseUser !== undefined) {
+      fetchChats(userId, true);
+    }
+  }, [userId, firebaseUser]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, loading]);
 
   // Load a selected chat session
-  async function selectChat(chatId) {
-    if (!userId) return;
+  async function selectChat(chatId, targetUserId = userId) {
+    if (!targetUserId) return;
     setActiveChatId(chatId);
     setLoading(true);
     try {
-      const res = await fetch(`${BACKEND_URL}/chats/${chatId}?userId=${encodeURIComponent(userId)}`);
+      const res = await fetch(`${BACKEND_URL}/chats/${chatId}?userId=${encodeURIComponent(targetUserId)}`);
       if (!res.ok) throw new Error("Failed to load chat history");
       const data = await res.json();
 

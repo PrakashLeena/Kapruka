@@ -32,6 +32,12 @@ export function useVoice({ sendMessage, messages }) {
   const [voiceState, setVoiceState] = useState("idle");
   const [error, setError] = useState(null);
 
+  // Keep a ref to messages to avoid stale closure issues in the onResult listener
+  const messagesRef = useRef(messages);
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
   // Track how many messages existed when we sent a voice message.
   // We use this to detect when a NEW assistant message has arrived.
   const pendingResponseRef = useRef(false);
@@ -44,7 +50,7 @@ export function useVoice({ sendMessage, messages }) {
       // Transition: listening → thinking
       setVoiceState("thinking");
       pendingResponseRef.current = true;
-      messagesLengthAtSendRef.current = messages.length;
+      messagesLengthAtSendRef.current = messagesRef.current.length;
 
       // Call the EXACT same sendMessage used by text input
       // Prepend 🎤 so it's visually distinguishable in the chat history
@@ -74,8 +80,22 @@ export function useVoice({ sendMessage, messages }) {
   useEffect(() => {
     if (!pendingResponseRef.current) return;
 
+    const currentMsgs = messagesRef.current;
+
+    // Find the latest user message in the entire conversation
+    const userMsgs = currentMsgs.filter((m) => m.role === "user");
+    const lastUserMsg = userMsgs[userMsgs.length - 1];
+
+    // Only read if the user's last message was a voice message (starts with 🎤)
+    const isVoicePrompt = lastUserMsg?.text?.startsWith("🎤");
+
+    if (!isVoicePrompt) {
+      pendingResponseRef.current = false;
+      return;
+    }
+
     // Wait for the assistant to add at least one new message AND finish streaming
-    const newMessages = messages.slice(messagesLengthAtSendRef.current);
+    const newMessages = currentMsgs.slice(messagesLengthAtSendRef.current);
     const latestAssistant = newMessages.findLast?.((m) => m.role === "assistant");
 
     // findLast may not exist in older Chrome — safe fallback

@@ -121,7 +121,7 @@ async function connectMongo() {
     console.log("✅ Connected to MongoDB Atlas");
     return db;
   } catch (err) {
-    console.error("❌ MongoDB connection failed:", err.message);
+    console.error("❌ MongoDB connection failed:", err);
     return null;
   }
 }
@@ -644,6 +644,41 @@ app.delete("/chats/:id", async (req, res) => {
   } catch (err) {
     console.error("DELETE /chats/:id error:", err);
     res.status(500).json({ error: "Failed to delete chat." });
+  }
+});
+
+/**
+ * POST /chats/migrate
+ * Migrates guest chat sessions to the logged-in user's account in MongoDB
+ */
+app.post("/chats/migrate", async (req, res) => {
+  try {
+    const { guestId, userId } = req.body;
+    if (!guestId || !userId) {
+      return res.status(400).json({ error: "guestId and userId are required." });
+    }
+    const col = getChatCollection();
+    if (col) {
+      // Update all chat sessions belonging to guestId to userId
+      const result = await col.updateMany({ userId: guestId }, { $set: { userId } });
+      console.log(`[migrate] Migrated ${result.modifiedCount} chat sessions from guest ${guestId} to user ${userId}`);
+    } else {
+      // In-memory fallback migration
+      let count = 0;
+      for (const [key, msgs] of memSessions.entries()) {
+        if (key.startsWith(`${guestId}:`)) {
+          const id = key.split(":")[1];
+          memSessions.set(`${userId}:${id}`, msgs);
+          memSessions.delete(key);
+          count++;
+        }
+      }
+      console.log(`[migrate] Migrated in-memory ${count} chat sessions from guest ${guestId} to user ${userId}`);
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("POST /chats/migrate error:", err);
+    res.status(500).json({ error: "Failed to migrate chats." });
   }
 });
 

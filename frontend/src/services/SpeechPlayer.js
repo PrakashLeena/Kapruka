@@ -19,7 +19,7 @@
 const synth = window.speechSynthesis || null;
 
 // ── Callback registry ──────────────────────────────────────────────────────────
-let _onEndCallback = null;
+const _onEndCallbacks = new Set();
 
 /**
  * Strip markdown formatting characters so the TTS doesn't read them aloud.
@@ -45,13 +45,42 @@ function _stripMarkdown(text) {
 }
 
 /**
- * Pick the best available English voice. Prefers a natural-sounding voice.
- * Falls back to whatever the browser provides.
+ * Pick the best available voice with preference for a Sri Lankan tone,
+ * followed by a regional fallback (India), and then international English.
  * @returns {SpeechSynthesisVoice | null}
  */
 function _pickVoice() {
   if (!synth) return null;
   const voices = synth.getVoices();
+
+  // 1. Search for Sri Lankan English, Sinhala, or Tamil voices
+  const sriLankanVoice = voices.find((v) => {
+    const lang = v.lang.toLowerCase();
+    const name = v.name.toLowerCase();
+    return (
+      lang.includes("lk") ||
+      name.includes("sri lanka") ||
+      name.includes("lanka") ||
+      lang.startsWith("si")
+    );
+  });
+  if (sriLankanVoice) {
+    console.log("[SpeechPlayer] Selected Sri Lankan voice:", sriLankanVoice.name);
+    return sriLankanVoice;
+  }
+
+  // 2. Fallback to Indian English (en-IN) which is regionally close and widely available
+  const indianVoice = voices.find((v) => {
+    const lang = v.lang.toLowerCase();
+    const name = v.name.toLowerCase();
+    return lang.includes("in") || name.includes("india");
+  });
+  if (indianVoice) {
+    console.log("[SpeechPlayer] Selected regional fallback voice:", indianVoice.name);
+    return indianVoice;
+  }
+
+  // 3. Standard preferred English voices
   const preferred = [
     "Google UK English Female",
     "Google US English",
@@ -62,7 +91,8 @@ function _pickVoice() {
     const v = voices.find((v) => v.name === name);
     if (v) return v;
   }
-  // Fallback: first English voice
+
+  // Fallback: first English voice, or first voice available
   return voices.find((v) => v.lang.startsWith("en")) || voices[0] || null;
 }
 
@@ -79,9 +109,13 @@ export const SpeechPlayerService = {
   /**
    * Register a callback that fires when speech finishes (natural end or stop()).
    * @param {() => void} fn
+   * @returns {() => void} unsubscribe function
    */
   onEnd(fn) {
-    _onEndCallback = fn;
+    _onEndCallbacks.add(fn);
+    return () => {
+      _onEndCallbacks.delete(fn);
+    };
   },
 
   /**
@@ -114,14 +148,18 @@ export const SpeechPlayerService = {
     if (voice) utterance.voice = voice;
 
     utterance.onend = () => {
-      if (_onEndCallback) _onEndCallback();
+      _onEndCallbacks.forEach((fn) => {
+        try { fn(); } catch (e) { console.error(e); }
+      });
     };
 
     utterance.onerror = (event) => {
       // "interrupted" fires when we call cancel() — not a real error
       if (event.error === "interrupted" || event.error === "canceled") return;
       console.warn("[SpeechPlayer] utterance error:", event.error);
-      if (_onEndCallback) _onEndCallback();
+      _onEndCallbacks.forEach((fn) => {
+        try { fn(); } catch (e) { console.error(e); }
+      });
     };
 
     // Chrome bug: speech gets stuck after ~15s — resuming first mitigates it
@@ -135,6 +173,10 @@ export const SpeechPlayerService = {
   stop() {
     if (synth) {
       synth.cancel();
+      // Ensure all subscribers are notified that speech stopped
+      _onEndCallbacks.forEach((fn) => {
+        try { fn(); } catch (e) { console.error(e); }
+      });
     }
   },
 };
