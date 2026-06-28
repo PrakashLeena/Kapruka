@@ -22,6 +22,17 @@ const SpeechRecognition =
 
 let _recognition = null;
 
+// ── Language setting ───────────────────────────────────────────────────────────
+// Defaults to English; call setLanguage() before start() to switch.
+let _lang = "en-US";
+
+// Map of app language keys → BCP-47 locale codes for SpeechRecognition
+const LANG_MAP = {
+  tamil:   "ta-IN",
+  sinhala: "si-LK",
+  english: "en-US",
+};
+
 // ── Callback registry ──────────────────────────────────────────────────────────
 let _onResultCallback = null;
 let _onErrorCallback = null;
@@ -31,7 +42,7 @@ function _buildRecognition() {
   if (!SpeechRecognition) return null;
 
   const rec = new SpeechRecognition();
-  rec.lang = "en-US";
+  rec.lang = _lang;             // dynamically set — supports Tamil, Sinhala, English
   rec.continuous = false;       // auto-stop after one utterance
   rec.interimResults = false;   // only fire when confidence is final
   rec.maxAlternatives = 1;
@@ -80,6 +91,25 @@ export const VoiceRecognitionService = {
    */
   isSupported() {
     return SpeechRecognition !== null;
+  },
+
+  /**
+   * Set the recognition language before calling start().
+   * Accepts app language keys ('tamil' | 'sinhala' | 'english')
+   * OR raw BCP-47 locale strings ('ta-IN', 'si-LK', 'en-US', etc.).
+   * @param {string} lang
+   */
+  setLanguage(lang) {
+    _lang = LANG_MAP[lang] || lang || "en-US";
+    console.log("[VoiceRecognition] Recognition language set to:", _lang);
+  },
+
+  /**
+   * Returns the currently configured recognition language (BCP-47).
+   * @returns {string}
+   */
+  getLanguage() {
+    return _lang;
   },
 
   /**

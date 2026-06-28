@@ -12,17 +12,19 @@
  *   messages     — the live messages array from App.jsx
  *
  * Returns:
- *   voiceState   — 'idle' | 'listening' | 'thinking' | 'speaking'
- *   startListening() — start mic capture
- *   stopAll()        — cancel mic + TTS, return to idle
- *   error            — string | null (user-facing error message)
- *   clearError()     — dismiss the error
+ *   voiceState        — 'idle' | 'listening' | 'thinking' | 'speaking'
+ *   startListening()  — start mic capture
+ *   stopAll()         — cancel mic + TTS, return to idle
+ *   error             — string | null (user-facing error message)
+ *   clearError()      — dismiss the error
+ *   recognitionLang   — 'auto' | 'tamil' | 'sinhala' | 'english'
+ *   setRecognitionLang(lang) — explicitly pin the recognition language
  */
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { VoiceRecognitionService } from "../services/VoiceRecognition.js";
 import { SpeechPlayerService } from "../services/SpeechPlayer.js";
-import { detectLanguage } from "../services/LanguageDetector.js";
+import { detectLanguage, detectConversationLanguage } from "../services/LanguageDetector.js";
 
 /**
  * @typedef {'idle'|'listening'|'thinking'|'speaking'} VoiceState
@@ -32,6 +34,14 @@ export function useVoice({ sendMessage, messages }) {
   /** @type {[VoiceState, Function]} */
   const [voiceState, setVoiceState] = useState("idle");
   const [error, setError] = useState(null);
+
+  // Explicit language pin: 'auto' means detect from conversation history.
+  // 'tamil' | 'sinhala' | 'english' force recognition to that language.
+  const [recognitionLang, setRecognitionLang] = useState("auto");
+  const recognitionLangRef = useRef("auto");
+  useEffect(() => {
+    recognitionLangRef.current = recognitionLang;
+  }, [recognitionLang]);
 
   // Keep a ref to messages to avoid stale closure issues in the onResult listener
   const messagesRef = useRef(messages);
@@ -53,9 +63,10 @@ export function useVoice({ sendMessage, messages }) {
       pendingResponseRef.current = true;
       messagesLengthAtSendRef.current = messagesRef.current.length;
 
-      // Detect language from what the user just said
+      // Detect language from what the user just said and sync both services
       const lang = detectLanguage(transcript);
       SpeechPlayerService.setLanguage(lang);
+      VoiceRecognitionService.setLanguage(lang); // keep recognition in sync for next turn
       console.log("[useVoice] Detected language:", lang, "for transcript:", transcript);
 
       // Call the EXACT same sendMessage used by text input
@@ -123,6 +134,20 @@ export function useVoice({ sendMessage, messages }) {
     SpeechPlayerService.stop();
     setError(null);
     setVoiceState("listening");
+
+    // Determine recognition language:
+    //  1. If user explicitly pinned a language → use that.
+    //  2. Otherwise auto-detect from conversation history.
+    const pinned = recognitionLangRef.current;
+    const lang =
+      pinned !== "auto"
+        ? pinned
+        : detectConversationLanguage(messagesRef.current);
+
+    VoiceRecognitionService.setLanguage(lang);
+    SpeechPlayerService.setLanguage(lang === "auto" ? "english" : lang);
+    console.log("[useVoice] Starting recognition in language:", lang, "(pin:", pinned, ")");
+
     VoiceRecognitionService.start();
   }, []);
 
@@ -142,5 +167,7 @@ export function useVoice({ sendMessage, messages }) {
     error,
     clearError,
     isSupported: VoiceRecognitionService.isSupported(),
+    recognitionLang,
+    setRecognitionLang,
   };
 }
