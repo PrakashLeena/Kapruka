@@ -34,10 +34,24 @@ export default function ChatMessage({ message, onAddToCart, speakLang = "english
   };
 
   if (isUser) {
+    const isVoice = message.text?.startsWith("🎤");
     return (
       <div className="flex justify-end">
-        <div className="max-w-[80%] bg-terracotta text-white px-4 py-2.5 rounded-2xl rounded-br-sm text-sm leading-relaxed">
-          {message.text}
+        <div className="max-w-[80%] bg-terracotta text-white px-4 py-2.5 rounded-2xl rounded-br-sm text-sm leading-relaxed flex flex-col gap-2">
+          {message.image && (
+            <div className="overflow-hidden rounded-xl bg-black/5">
+              <img
+                src={message.image}
+                alt="Uploaded attachment"
+                className="max-w-full max-h-64 object-cover rounded-xl border border-white/10 shadow-sm"
+              />
+            </div>
+          )}
+          {message.text && (
+            <div className={isVoice ? "italic" : ""}>
+              {message.text}
+            </div>
+          )}
         </div>
       </div>
     );

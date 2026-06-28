@@ -4,7 +4,10 @@ import TypingIndicator from "./components/TypingIndicator.jsx";
 import RightPane from "./components/RightPane.jsx";
 import ChatSidebar from "./components/ChatSidebar.jsx";
 import VoiceButton from "./components/VoiceButton.jsx";
+import ImageUpload from "./components/ImageUpload.jsx";
+import ImagePreview from "./components/ImagePreview.jsx";
 import { useVoice } from "./hooks/useVoice.js";
+import { useImageUpload } from "./hooks/useImageUpload.js";
 import { onAuthChange } from "./firebase.js";
 import { detectConversationLanguage } from "./services/LanguageDetector.js";
 import kaprukaLogo from "./kapruka_com_logo.jpg";
@@ -40,6 +43,64 @@ export default function App() {
 
   // Language detected from user messages: 'english' | 'tamil' | 'sinhala'
   const [conversationLang, setConversationLang] = useState("english");
+
+  // Image Upload Hook Integration
+  const {
+    image: uploadedImage,
+    error: imageError,
+    isCompressing: imageCompressing,
+    processFile: processImageFile,
+    handleFileChange: handleImageFileChange,
+    clearImage: clearUploadedImage,
+    setError: setImageError
+  } = useImageUpload();
+
+  const [isDragging, setIsDragging] = useState(false);
+
+  // Paste handler for images
+  useEffect(() => {
+    const handlePaste = (e) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (const item of items) {
+        if (item.type.startsWith("image/")) {
+          const file = item.getAsFile();
+          if (file) {
+            processImageFile(file);
+            e.preventDefault();
+            break;
+          }
+        }
+      }
+    };
+
+    window.addEventListener("paste", handlePaste);
+    return () => window.removeEventListener("paste", handlePaste);
+  }, [processImageFile]);
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const files = e.dataTransfer?.files;
+    if (files && files.length > 0) {
+      const file = files[0];
+      if (file.type.startsWith("image/")) {
+        processImageFile(file);
+      } else {
+        setImageError("Only image files are supported.");
+      }
+    }
+  };
 
   const scrollRef = useRef(null);
 
@@ -126,12 +187,26 @@ export default function App() {
       if (!res.ok) throw new Error("Failed to load chat history");
       const data = await res.json();
 
-      const formattedMessages = (data.messages || []).map((m) => ({
-        role: m.role,
-        text: m.content || m.text || "",
-        products: [],
-        order: null,
-      }));
+      const formattedMessages = (data.messages || []).map((m) => {
+        let text = "";
+        let image = null;
+        if (Array.isArray(m.content)) {
+          const textObj = m.content.find((c) => c.type === "text");
+          const imgObj = m.content.find((c) => c.type === "image_url");
+          text = textObj ? textObj.text : "";
+          image = imgObj ? imgObj.image_url?.url : null;
+        } else {
+          text = m.content || m.text || "";
+        }
+
+        return {
+          role: m.role,
+          text: text,
+          image: image,
+          products: [],
+          order: null,
+        };
+      });
 
       setMessages(formattedMessages);
       setCurrentProducts([]);
@@ -170,18 +245,30 @@ export default function App() {
     setSelectedProduct(null);
   }
 
-  async function sendMessage(text) {
+  async function sendMessage(textOrObj) {
+    let text = "";
+    let base64Image = null;
+
+    if (typeof textOrObj === "object" && textOrObj !== null) {
+      text = textOrObj.text || "";
+      base64Image = textOrObj.image || null;
+    } else {
+      text = textOrObj || "";
+    }
+
     const trimmed = text.trim();
-    if (!trimmed || loading) return;
+    if (!trimmed && !base64Image) return;
+    if (loading) return;
 
     // Detect language from this message and update conversation language
     setMessages((prev) => {
-      const updatedMsgs = [...prev, { role: "user", text: trimmed }];
+      const updatedMsgs = [...prev, { role: "user", text: trimmed, image: base64Image }];
       const lang = detectConversationLanguage(updatedMsgs);
       setConversationLang(lang);
       return updatedMsgs;
     });
     setInput("");
+    clearUploadedImage();
     setLoading(true); // show TypingIndicator during tool-call phase
 
     const maxRetries = 3;
@@ -206,6 +293,7 @@ export default function App() {
           body: JSON.stringify({
             sessionId: activeChatId,
             message: trimmed,
+            image: base64Image,
             userId,
           }),
         });
@@ -315,7 +403,7 @@ export default function App() {
 
   function handleSubmit(e) {
     e.preventDefault();
-    sendMessage(input);
+    sendMessage({ text: input, image: uploadedImage });
   }
 
   // ── Voice integration ──────────────────────────────────────────────────────
@@ -343,7 +431,25 @@ export default function App() {
   }
 
   return (
-    <div className="h-dvh flex flex-col bg-cream-50 overflow-hidden">
+    <div
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      className="h-dvh flex flex-col bg-cream-50 overflow-hidden relative"
+    >
+      {/* Visual Drag Overlay */}
+      {isDragging && (
+        <div className="absolute inset-0 bg-teal/20 backdrop-blur-sm z-50 flex items-center justify-center pointer-events-none transition-all">
+          <div className="bg-white border-2 border-dashed border-teal rounded-2xl p-6 text-teal font-semibold shadow-xl flex flex-col items-center gap-3">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="17 8 12 3 7 8" />
+              <line x1="12" y1="3" x2="12" y2="15" />
+            </svg>
+            <span>Drop your image here to upload</span>
+          </div>
+        </div>
+      )}
       {/* Header */}
       <header className="shrink-0 bg-teal text-white px-5 py-4 flex items-center justify-between shadow-sm">
         <div className="flex items-center gap-3">
@@ -492,14 +598,30 @@ export default function App() {
 
           {/* Input bar */}
           <form onSubmit={handleSubmit} className="shrink-0 border-t border-cream-200 bg-cream-50 p-2.5 sm:p-3">
-            <div className="max-w-2xl mx-auto flex items-center gap-2">
-              <input
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder="Type in Sinhala, Tamil, English, or mix it up..."
-                disabled={loading}
-                className="flex-1 bg-white border border-cream-200 rounded-full px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal/40"
+            {/* Image Error Alert */}
+            {imageError && (
+              <div className="max-w-2xl mx-auto mb-2 p-2.5 bg-red-50 border border-red-200 rounded-xl text-xs text-red-600 flex justify-between items-center animate-fadeIn">
+                <span>{imageError}</span>
+                <button type="button" onClick={() => setImageError(null)} className="font-bold underline ml-2">Dismiss</button>
+              </div>
+            )}
+            
+            {/* Image Preview Thumbnail */}
+            <div className="max-w-2xl mx-auto mb-2">
+              <ImagePreview
+                image={uploadedImage}
+                isCompressing={imageCompressing}
+                onRemove={clearUploadedImage}
               />
+            </div>
+
+            <div className="max-w-2xl mx-auto flex items-center gap-2">
+              {/* Image Upload Button */}
+              <ImageUpload
+                onFileSelect={processImageFile}
+                disabled={loading}
+              />
+
               {/* Voice button — sits between text input and send button */}
               <VoiceButton
                 voiceState={voiceState}
@@ -510,9 +632,18 @@ export default function App() {
                 onClearError={clearError}
                 isSupported={voiceSupported}
               />
+
+              <input
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder="Type in Sinhala, Tamil, English, or mix it up..."
+                disabled={loading}
+                className="flex-1 bg-white border border-cream-200 rounded-full px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal/40"
+              />
+
               <button
                 type="submit"
-                disabled={loading || !input.trim()}
+                disabled={loading || (!input.trim() && !uploadedImage)}
                 className="w-10 h-10 shrink-0 rounded-full bg-terracotta hover:bg-terracotta-dark disabled:bg-cream-200 text-white flex items-center justify-center transition-colors"
                 aria-label="Send message"
               >
