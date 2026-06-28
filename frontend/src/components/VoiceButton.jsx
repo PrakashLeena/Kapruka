@@ -9,15 +9,13 @@
  *   speaking  → teal waveform VoiceAnimation — click to stop TTS
  *
  * Props:
- *   voiceState      — 'idle'|'listening'|'thinking'|'speaking'
- *   onStart         — () => void  called when mic should start
- *   onStop          — () => void  called when user cancels
- *   disabled        — boolean    true while backend request is loading (text path)
- *   error           — string|null
- *   onClearError    — () => void
- *   isSupported     — boolean    false = show unsupported message instead of button
- *   recognitionLang — 'auto'|'tamil'|'sinhala'|'english'
- *   setRecognitionLang — (lang: string) => void
+ *   voiceState    — 'idle'|'listening'|'thinking'|'speaking'
+ *   onStart       — () => void  called when mic should start
+ *   onStop        — () => void  called when user cancels
+ *   disabled      — boolean    true while backend request is loading (text path)
+ *   error         — string|null
+ *   onClearError  — () => void
+ *   isSupported   — boolean    false = show unsupported message instead of button
  */
 
 import VoiceAnimation from "./VoiceAnimation.jsx";
@@ -29,14 +27,6 @@ const LABELS = {
   speaking: "Stop speaking",
 };
 
-// Language toggle options shown next to the mic button
-const LANG_OPTIONS = [
-  { value: "auto", label: "Auto" },
-  { value: "tamil",   label: "தமிழ்" },
-  { value: "sinhala", label: "සිං" },
-  { value: "english", label: "EN" },
-];
-
 export default function VoiceButton({
   voiceState,
   onStart,
@@ -45,8 +35,6 @@ export default function VoiceButton({
   error,
   onClearError,
   isSupported,
-  recognitionLang = "auto",
-  setRecognitionLang,
 }) {
   // ── Browser not supported ─────────────────────────────────────────────────────
   if (!isSupported) {
@@ -88,28 +76,7 @@ export default function VoiceButton({
   }[voiceState];
 
   return (
-    <div className="relative flex items-center gap-1">
-      {/* Language toggle pill — only visible in idle state */}
-      {voiceState === "idle" && setRecognitionLang && (
-        <div className="flex items-center rounded-full border border-cream-200 bg-white overflow-hidden text-[10px] font-medium shadow-sm">
-          {LANG_OPTIONS.map((opt) => (
-            <button
-              key={opt.value}
-              type="button"
-              onClick={() => setRecognitionLang(opt.value)}
-              title={`Voice input: ${opt.label}`}
-              className={`px-2 py-1 transition-colors leading-none ${
-                recognitionLang === opt.value
-                  ? "bg-teal text-white"
-                  : "text-charcoal/50 hover:bg-cream-100 hover:text-charcoal"
-              }`}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
-      )}
-
+    <div className="relative flex items-center">
       {/* Listening / Speaking animation shown outside the button */}
       {(voiceState === "listening" || voiceState === "speaking") && (
         <VoiceAnimation state={voiceState} />

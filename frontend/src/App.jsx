@@ -328,8 +328,6 @@ export default function App() {
     error: voiceError,
     clearError,
     isSupported: voiceSupported,
-    recognitionLang,
-    setRecognitionLang,
   } = useVoice({ sendMessage, messages });
 
   // Show a loading spinner while Firebase resolves initial auth state
@@ -511,8 +509,6 @@ export default function App() {
                 error={voiceError}
                 onClearError={clearError}
                 isSupported={voiceSupported}
-                recognitionLang={recognitionLang}
-                setRecognitionLang={setRecognitionLang}
               />
               <button
                 type="submit"

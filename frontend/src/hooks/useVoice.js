@@ -17,8 +17,6 @@
  *   stopAll()         — cancel mic + TTS, return to idle
  *   error             — string | null (user-facing error message)
  *   clearError()      — dismiss the error
- *   recognitionLang   — 'auto' | 'tamil' | 'sinhala' | 'english'
- *   setRecognitionLang(lang) — explicitly pin the recognition language
  */
 
 import { useState, useEffect, useRef, useCallback } from "react";
@@ -34,14 +32,6 @@ export function useVoice({ sendMessage, messages }) {
   /** @type {[VoiceState, Function]} */
   const [voiceState, setVoiceState] = useState("idle");
   const [error, setError] = useState(null);
-
-  // Explicit language pin: 'auto' means detect from conversation history.
-  // 'tamil' | 'sinhala' | 'english' force recognition to that language.
-  const [recognitionLang, setRecognitionLang] = useState("auto");
-  const recognitionLangRef = useRef("auto");
-  useEffect(() => {
-    recognitionLangRef.current = recognitionLang;
-  }, [recognitionLang]);
 
   // Keep a ref to messages to avoid stale closure issues in the onResult listener
   const messagesRef = useRef(messages);
@@ -135,18 +125,18 @@ export function useVoice({ sendMessage, messages }) {
     setError(null);
     setVoiceState("listening");
 
-    // Determine recognition language:
-    //  1. If user explicitly pinned a language → use that.
-    //  2. Otherwise auto-detect from conversation history.
-    const pinned = recognitionLangRef.current;
-    const lang =
-      pinned !== "auto"
-        ? pinned
-        : detectConversationLanguage(messagesRef.current);
+    // Auto-detect language from conversation history.
+    // If no history yet (first message), default to 'ta-IN' so Tamil speakers
+    // are recognised correctly from the very first utterance.
+    // English is also well-understood by ta-IN — the recogniser handles both.
+    const historyLang = detectConversationLanguage(messagesRef.current);
+    const lang = historyLang !== "english" ? historyLang : (
+      messagesRef.current.length === 0 ? "tamil" : "english"
+    );
 
     VoiceRecognitionService.setLanguage(lang);
-    SpeechPlayerService.setLanguage(lang === "auto" ? "english" : lang);
-    console.log("[useVoice] Starting recognition in language:", lang, "(pin:", pinned, ")");
+    SpeechPlayerService.setLanguage(lang);
+    console.log("[useVoice] Starting recognition in language:", lang);
 
     VoiceRecognitionService.start();
   }, []);
@@ -167,7 +157,5 @@ export function useVoice({ sendMessage, messages }) {
     error,
     clearError,
     isSupported: VoiceRecognitionService.isSupported(),
-    recognitionLang,
-    setRecognitionLang,
   };
 }

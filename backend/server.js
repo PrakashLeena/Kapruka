@@ -94,6 +94,43 @@ function isToolCacheable(toolName) {
   return !writePhrases.some((p) => lower.includes(p));
 }
 
+// ─── Tool-call text scrubber ─────────────────────────────────────────────────
+// Some LLM models (e.g. GLM) emit tool calls as raw XML/text mixed into their
+// response instead of using the structured function-calling format.
+// These patterns must be stripped before the text reaches the client.
+//
+// Patterns handled:
+//   <tool_call> ... </tool_call>
+//   <function=name> ... </function>
+//   \`\`\`tool_call ... \`\`\`  (code-fenced variant)
+const TOOL_CALL_PATTERNS = [
+  // XML block: <tool_call>...</tool_call>
+  /<tool_call>[\s\S]*?<\/tool_call>/gi,
+  // XML block: <function=anything>...</function>
+  /<function=[^>]*>[\s\S]*?<\/function>/gi,
+  // Standalone open tags that didn't get closed (partial stream)
+  /<tool_call>[\s\S]*/gi,
+  /<function=[^>\n]*>/gi,
+  // Code-fenced block labelled tool_call or function_call
+  /```(?:tool_call|function_call)[\s\S]*?```/gi,
+];
+
+/**
+ * Remove all raw tool-call markup from a model response string.
+ * @param {string} text
+ * @returns {string}
+ */
+function stripToolCallMarkup(text) {
+  if (!text) return text;
+  let cleaned = text;
+  for (const pattern of TOOL_CALL_PATTERNS) {
+    cleaned = cleaned.replace(pattern, "");
+  }
+  // Collapse multiple blank lines left behind by the removal
+  cleaned = cleaned.replace(/\n{3,}/g, "\n\n").trim();
+  return cleaned;
+}
+
 if (!process.env.NVIDIA_API_KEY) {
   console.warn("WARNING: NVIDIA_API_KEY is not set in the environment variables.");
 }
@@ -808,7 +845,11 @@ app.post("/chat", async (req, res) => {
       }
 
       // Final text response reached
-      const text = assistantMessage.content || "";
+      const rawText = assistantMessage.content || "";
+      const text = stripToolCallMarkup(rawText);
+      if (rawText !== text) {
+        console.warn("[/chat] Stripped tool_call markup from model response.");
+      }
       history.push({ role: "assistant", content: text });
       trimHistory(history);
 
@@ -959,14 +1000,54 @@ app.post("/chat/stream", async (req, res) => {
       const toolCallsMap = {}; // index → partial tool call object
       let hasToolCalls = false;
 
+      // Lookahead buffer: holds text that might be the start of a <tool_call>
+      // block. We flush it only once we're sure it isn't tool-call markup.
+      let holdBuf = "";
+
+      const flushHeld = () => {
+        if (!holdBuf) return;
+        // Strip any tool_call markup that slipped in before we could intercept
+        const safe = stripToolCallMarkup(holdBuf);
+        if (safe) emit({ type: "delta", text: safe });
+        holdBuf = "";
+      };
+
       for await (const chunk of streamLLMCall(currentMessages, openAiTools)) {
         const delta = chunk.choices?.[0]?.delta;
         if (!delta) continue;
 
-        // ── Text delta: stream immediately to client ──────────────────────
+        // ── Text delta: buffer around potential <tool_call> blocks ────────
         if (delta.content) {
           fullContent += delta.content;
-          emit({ type: "delta", text: delta.content });
+
+          // Append new token to the hold buffer
+          holdBuf += delta.content;
+
+          // If no '<' is in the buffer we're safe to flush immediately
+          const ltIdx = holdBuf.indexOf("<");
+          if (ltIdx === -1) {
+            flushHeld();
+          } else {
+            // Flush everything before the '<' — it's clean text
+            const safePrefix = holdBuf.slice(0, ltIdx);
+            if (safePrefix) emit({ type: "delta", text: safePrefix });
+            holdBuf = holdBuf.slice(ltIdx); // keep from '<' onwards
+
+            // If the buffer contains a complete tool_call block, strip it
+            if (/<\/tool_call>/i.test(holdBuf) || /<\/function>/i.test(holdBuf)) {
+              holdBuf = stripToolCallMarkup(holdBuf);
+              if (holdBuf && !holdBuf.includes("<")) {
+                flushHeld();
+              }
+            }
+            // Otherwise keep buffering until we see the closing tag or a
+            // non-'<' character that proves this isn't a tool_call block.
+            // Safety valve: if buffer grows beyond 2KB without a close tag,
+            // it's probably normal text starting with '<' — flush as-is.
+            else if (holdBuf.length > 2048) {
+              flushHeld();
+            }
+          }
         }
 
         // ── Tool call delta: accumulate silently (don't stream to client) ─
@@ -988,7 +1069,41 @@ app.post("/chat/stream", async (req, res) => {
         }
       }
 
+      // Flush any remaining lookahead buffer after the stream ends
+      flushHeld();
+
       const toolCalls = Object.values(toolCallsMap).filter(Boolean);
+
+      // ── Detect text-format tool calls (GLM XML leak) ─────────────────────
+      // Some model responses contain <tool_call>...</tool_call> in the text
+      // content instead of the structured tool_calls field. Parse and execute
+      // them so they don't appear as raw text in the chat.
+      if (!hasToolCalls && fullContent) {
+        const xmlToolCallRe = /<tool_call>\s*<function=(\S+)>([\s\S]*?)<\/function>\s*<\/tool_call>/gi;
+        let xmlMatch;
+        const parsedXmlCalls = [];
+        while ((xmlMatch = xmlToolCallRe.exec(fullContent)) !== null) {
+          const fnName = xmlMatch[1].trim();
+          const fnBody = xmlMatch[2].trim();
+          let fnArgs = {};
+          try { fnArgs = JSON.parse(fnBody); } catch { /* ignore malformed */ }
+          parsedXmlCalls.push({ name: fnName, args: fnArgs });
+        }
+        if (parsedXmlCalls.length > 0) {
+          console.warn("[stream] Detected text-format tool calls, executing them:", parsedXmlCalls.map(c => c.name));
+          hasToolCalls = true;
+          // Convert to structured tool_calls format so the loop below handles them
+          parsedXmlCalls.forEach((c, i) => {
+            toolCallsMap[i] = {
+              id: `xml_tc_${Date.now()}_${i}`,
+              type: "function",
+              function: { name: c.name, arguments: JSON.stringify(c.args) },
+            };
+          });
+          // Discard the raw XML content — don't stream it to the client
+          fullContent = stripToolCallMarkup(fullContent);
+        }
+      }
 
       // Build and append the assistant message for this turn
       const assistantMessage = { role: "assistant", content: fullContent || null };
@@ -1050,7 +1165,11 @@ app.post("/chat/stream", async (req, res) => {
       }
 
       // ── Final text turn: persist + emit metadata + close stream ──────────
-      history.push({ role: "assistant", content: fullContent });
+      const cleanedContent = stripToolCallMarkup(fullContent);
+      if (cleanedContent !== fullContent) {
+        console.warn("[stream] Stripped tool_call markup from final response.");
+      }
+      history.push({ role: "assistant", content: cleanedContent });
       trimHistory(history);
       await saveHistory(sessionId, history, firstUserMessage, userId);
 
