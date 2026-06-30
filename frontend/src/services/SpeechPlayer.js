@@ -16,6 +16,13 @@
  *   file in useVoice.js. No hook or component code needs to change.
  */
 
+import {
+  transliterateTamil,
+  transliterateSinhala,
+  hasTamilScript,
+  hasSinhalaScript,
+} from "./Transliterator.js";
+
 const synth = window.speechSynthesis || null;
 
 // ── Callback registry ──────────────────────────────────────────────────────────
@@ -176,16 +183,54 @@ export const SpeechPlayerService = {
     // Cancel any in-progress speech before starting new
     synth.cancel();
 
-    const cleanText = _stripMarkdown(text);
+    let cleanText = _stripMarkdown(text);
     if (!cleanText) return;
+
+    let voice = _pickVoice();
+
+    // TTS Fallback and Transliteration Routing:
+    if (_currentLang === "tamil") {
+      if (!hasTamilScript(cleanText)) {
+        // 1. Text is Romanized Tanglish: use English/Indian English voice instead of native Tamil
+        voice = _pickVoice("english");
+        console.log("[SpeechPlayer] Speaking Tanglish using English voice:", voice?.name);
+      } else {
+        // 2. Text is Tamil script: check if we have a native Tamil voice
+        const isNativeTamilVoice = voice && (
+          voice.lang.startsWith("ta") || 
+          voice.name.toLowerCase().includes("tamil")
+        );
+        if (!isNativeTamilVoice) {
+          // Fallback: no native Tamil voice on this system, transliterate Tamil script to Tanglish
+          console.log("[SpeechPlayer] No native Tamil voice found. Transliterating Tamil script for fallback TTS...");
+          cleanText = transliterateTamil(cleanText);
+        }
+      }
+    } else if (_currentLang === "sinhala") {
+      if (!hasSinhalaScript(cleanText)) {
+        // 1. Text is Romanized Singlish: use English voice instead of native Sinhala
+        voice = _pickVoice("english");
+        console.log("[SpeechPlayer] Speaking Singlish using English voice:", voice?.name);
+      } else {
+        // 2. Text is Sinhala script: check if we have a native Sinhala voice
+        const isNativeSinhalaVoice = voice && (
+          voice.lang.startsWith("si") || 
+          voice.name.toLowerCase().includes("sinhala") || 
+          voice.name.toLowerCase().includes("sinhal")
+        );
+        if (!isNativeSinhalaVoice) {
+          // Fallback: no native Sinhala voice on this system, transliterate Sinhala script to Singlish
+          console.log("[SpeechPlayer] No native Sinhala voice found. Transliterating Sinhala script for fallback TTS...");
+          cleanText = transliterateSinhala(cleanText);
+        }
+      }
+    }
 
     const utterance = new SpeechSynthesisUtterance(cleanText);
     utterance.rate = 1.0;   // natural speed
     utterance.pitch = 1.0;
     utterance.volume = 1.0;
 
-    // Voices may not be loaded yet on first call — re-attempt after voices load
-    const voice = _pickVoice();
     if (voice) utterance.voice = voice;
 
     utterance.onend = () => {
