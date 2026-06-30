@@ -4,6 +4,7 @@ import TypingIndicator from "./components/TypingIndicator.jsx";
 import RightPane from "./components/RightPane.jsx";
 import ChatSidebar from "./components/ChatSidebar.jsx";
 import VoiceButton from "./components/VoiceButton.jsx";
+import ImageButton from "./components/ImageButton.jsx";
 import { useVoice } from "./hooks/useVoice.js";
 import { onAuthChange } from "./firebase.js";
 import { detectConversationLanguage } from "./services/LanguageDetector.js";
@@ -313,6 +314,125 @@ export default function App() {
     }
   }
 
+  async function sendImageMessage(file, onComplete) {
+    if (loading) {
+      if (onComplete) onComplete();
+      return;
+    }
+    setLoading(true);
+
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const dataUrl = reader.result;
+        const commaIdx = dataUrl.indexOf(",");
+        if (commaIdx === -1) throw new Error("Failed to encode image");
+        const imageBase64 = dataUrl.slice(commaIdx + 1);
+
+        const res = await fetch(`${BACKEND_URL}/chat/image-search`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            imageBase64,
+            mimeType: file.type,
+            sessionId: activeChatId,
+            userId,
+          }),
+        });
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || "Image analysis failed");
+        }
+
+        const readerStream = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let assistantBubbleAdded = false;
+        const streamKey = `stream_${Date.now()}`;
+
+        while (true) {
+          const { done, value } = await readerStream.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop(); // retain incomplete line
+
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            let event;
+            try { event = JSON.parse(line.slice(6)); } catch { continue; }
+
+            if (event.type === "image_query") {
+              // Add user bubble displaying what the image query was
+              setMessages((prev) => {
+                const updatedMsgs = [...prev, { role: "user", text: `📷 [Searched Image: "${event.query}"]` }];
+                const lang = detectConversationLanguage(updatedMsgs);
+                setConversationLang(lang);
+                return updatedMsgs;
+              });
+            } else if (event.type === "delta") {
+              if (!assistantBubbleAdded) {
+                setLoading(false);
+                setMessages((prev) => [
+                  ...prev,
+                  { role: "assistant", text: event.text, streaming: true, products: [], order: null, _key: streamKey },
+                ]);
+                assistantBubbleAdded = true;
+              } else {
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m._key === streamKey ? { ...m, text: m.text + event.text } : m
+                  )
+                );
+              }
+            } else if (event.type === "products") {
+              if (event.data?.length > 0) {
+                setCurrentProducts(event.data);
+                setSelectedProduct(null);
+                setActiveTab("products");
+              }
+            } else if (event.type === "order") {
+              setMessages((prev) =>
+                prev.map((m) => (m._key === streamKey ? { ...m, order: event.data } : m))
+              );
+            } else if (event.type === "done") {
+              setMessages((prev) =>
+                prev.map((m) => (m._key === streamKey ? { ...m, streaming: false } : m))
+              );
+              fetchChats();
+            } else if (event.type === "error") {
+              throw new Error(event.message || "Stream error");
+            }
+          }
+        }
+      } catch (err) {
+        console.error("Image search error:", err);
+        const errText = err.message || "Something went wrong analyzing the image. Mind trying that again?";
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", text: errText, products: [], order: null },
+        ]);
+      } finally {
+        setLoading(false);
+        if (onComplete) onComplete();
+      }
+    };
+
+    reader.onerror = () => {
+      console.error("FileReader error");
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", text: "Failed to read the image file.", products: [], order: null },
+      ]);
+      setLoading(false);
+      if (onComplete) onComplete();
+    };
+
+    reader.readAsDataURL(file);
+  }
+
   function handleSubmit(e) {
     e.preventDefault();
     sendMessage(input);
@@ -509,6 +629,11 @@ export default function App() {
                 error={voiceError}
                 onClearError={clearError}
                 isSupported={voiceSupported}
+              />
+              {/* Image upload search button */}
+              <ImageButton
+                onImageSelected={sendImageMessage}
+                disabled={loading}
               />
               <button
                 type="submit"

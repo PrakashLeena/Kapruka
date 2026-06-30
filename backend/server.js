@@ -1191,10 +1191,272 @@ app.post("/chat/stream", async (req, res) => {
   }
 });
 
+// ─── Image-Based Product Search Endpoint ─────────────────────────────────────
+/**
+ * POST /chat/image-search
+ * Accepts a base64-encoded product image, uses Gemini Vision to extract a
+ * natural-language product query, then runs that query through the existing
+ * Kapruka MCP search pipeline and streams results back as SSE.
+ *
+ * Request body: { imageBase64: string, mimeType: string, sessionId: string, userId?: string }
+ * SSE events: delta | products | done | error  (same schema as /chat/stream)
+ */
+app.post("/chat/image-search", async (req, res) => {
+  const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+  if (!GEMINI_API_KEY || GEMINI_API_KEY === "your_gemini_api_key_here") {
+    return res.status(500).json({ error: "GEMINI_API_KEY is not configured on the server." });
+  }
+  if (!process.env.NVIDIA_API_KEY) {
+    return res.status(500).json({ error: "NVIDIA_API_KEY is not configured on the server." });
+  }
+
+  // ── SSE headers ────────────────────────────────────────────────────────────
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  if (res.socket) {
+    res.socket.setTimeout(0);
+    res.socket.setNoDelay(true);
+  }
+  res.flushHeaders();
+
+  const emit = (obj) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
+
+  const { imageBase64, mimeType, sessionId, userId } = req.body ?? {};
+
+  if (!imageBase64 || typeof imageBase64 !== "string") {
+    emit({ type: "error", message: "Missing imageBase64" });
+    return res.end();
+  }
+  if (!sessionId || typeof sessionId !== "string") {
+    emit({ type: "error", message: "Missing sessionId" });
+    return res.end();
+  }
+
+  try {
+    // ── Step 1: Use Gemini Vision to extract a product search query ──────────
+    const geminiPayload = {
+      contents: [
+        {
+          parts: [
+            {
+              inline_data: {
+                mime_type: mimeType || "image/jpeg",
+                data: imageBase64,
+              },
+            },
+            {
+              text: `You are a shopping assistant for Kapruka.com, a Sri Lankan e-commerce site.
+Look at this product image and extract a concise, specific product search query (3-8 words) 
+that would find this exact product or similar products on an e-commerce platform.
+Focus on: product type, key features, brand if visible, color/style if distinctive.
+Reply with ONLY the search query — no explanation, no punctuation at the end.
+Examples: "dark chocolate gift box", "birthday cake chocolate", "silk saree blue".`,
+            },
+          ],
+        },
+      ],
+      generationConfig: { temperature: 0.1, maxOutputTokens: 64 },
+    };
+
+    const geminiRes = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(geminiPayload),
+      }
+    );
+
+    if (!geminiRes.ok) {
+      const errText = await geminiRes.text();
+      console.error("Gemini Vision API error:", geminiRes.status, errText);
+      emit({ type: "error", message: "Image analysis failed. Please check your GEMINI_API_KEY." });
+      return res.end();
+    }
+
+    const geminiData = await geminiRes.json();
+    const extractedQuery = geminiData?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+
+    if (!extractedQuery) {
+      emit({ type: "error", message: "Could not understand the image. Please try a clearer photo." });
+      return res.end();
+    }
+
+    console.log(`[image-search] Gemini extracted query: "${extractedQuery}"`);
+
+    // Emit the extracted query as a delta so the user sees what was understood
+    emit({ type: "image_query", query: extractedQuery });
+
+    // ── Step 2: Run the extracted query through the normal MCP chat pipeline ──
+    const history = await getHistory(sessionId, userId);
+    const isFirstMessage = history.length === 0;
+    const userMessage = `Find me: ${extractedQuery}`;
+    const firstUserMessage = isFirstMessage ? userMessage : null;
+
+    history.push({ role: "user", content: userMessage });
+
+    const openAiTools = await getOpenAiTools();
+    if (openAiTools.length === 0) {
+      history.pop();
+      emit({ type: "error", message: "The shopping catalog is currently offline." });
+      return res.end();
+    }
+
+    let currentMessages = [
+      { role: "system", content: buildSystemPrompt() },
+      ...history,
+    ];
+
+    const products = [];
+    const orderRef = { value: null };
+
+    for (let loop = 0; loop < 10; loop++) {
+      let fullContent = "";
+      const toolCallsMap = {};
+      let hasToolCalls = false;
+      let holdBuf = "";
+
+      const flushHeld = () => {
+        if (!holdBuf) return;
+        const safe = stripToolCallMarkup(holdBuf);
+        if (safe) emit({ type: "delta", text: safe });
+        holdBuf = "";
+      };
+
+      for await (const chunk of streamLLMCall(currentMessages, openAiTools)) {
+        const delta = chunk.choices?.[0]?.delta;
+        if (!delta) continue;
+
+        if (delta.content) {
+          fullContent += delta.content;
+          holdBuf += delta.content;
+          const ltIdx = holdBuf.indexOf("<");
+          if (ltIdx === -1) {
+            flushHeld();
+          } else {
+            const safePrefix = holdBuf.slice(0, ltIdx);
+            if (safePrefix) emit({ type: "delta", text: safePrefix });
+            holdBuf = holdBuf.slice(ltIdx);
+            if (/<\/tool_call>/i.test(holdBuf) || /<\/function>/i.test(holdBuf)) {
+              holdBuf = stripToolCallMarkup(holdBuf);
+              if (holdBuf && !holdBuf.includes("<")) flushHeld();
+            } else if (holdBuf.length > 2048) {
+              flushHeld();
+            }
+          }
+        }
+
+        if (delta.tool_calls) {
+          hasToolCalls = true;
+          for (const tc of delta.tool_calls) {
+            const idx = tc.index;
+            if (!toolCallsMap[idx]) {
+              toolCallsMap[idx] = { id: tc.id || "", type: "function", function: { name: "", arguments: "" } };
+            }
+            if (tc.id) toolCallsMap[idx].id = tc.id;
+            if (tc.function?.name) toolCallsMap[idx].function.name += tc.function.name;
+            if (tc.function?.arguments) toolCallsMap[idx].function.arguments += tc.function.arguments;
+          }
+        }
+      }
+
+      flushHeld();
+      const toolCalls = Object.values(toolCallsMap).filter(Boolean);
+
+      // Detect XML-format tool calls
+      if (!hasToolCalls && fullContent) {
+        const xmlToolCallRe = /<tool_call>\s*<function=(\S+)>([\s\S]*?)<\/function>\s*<\/tool_call>/gi;
+        let xmlMatch;
+        const parsedXmlCalls = [];
+        while ((xmlMatch = xmlToolCallRe.exec(fullContent)) !== null) {
+          const fnName = xmlMatch[1].trim();
+          const fnBody = xmlMatch[2].trim();
+          let fnArgs = {};
+          try { fnArgs = JSON.parse(fnBody); } catch { /* ignore */ }
+          parsedXmlCalls.push({ name: fnName, args: fnArgs });
+        }
+        if (parsedXmlCalls.length > 0) {
+          hasToolCalls = true;
+          parsedXmlCalls.forEach((c, i) => {
+            toolCallsMap[i] = {
+              id: `xml_tc_${Date.now()}_${i}`,
+              type: "function",
+              function: { name: c.name, arguments: JSON.stringify(c.args) },
+            };
+          });
+          fullContent = stripToolCallMarkup(fullContent);
+        }
+      }
+
+      const assistantMessage = { role: "assistant", content: fullContent || null };
+      if (hasToolCalls && toolCalls.length > 0) assistantMessage.tool_calls = toolCalls;
+      currentMessages.push(assistantMessage);
+
+      if (hasToolCalls && toolCalls.length > 0) {
+        const toolPromises = toolCalls.map(async (toolCall) => {
+          const toolName = toolCall.function.name;
+          let toolArgs;
+          try { toolArgs = JSON.parse(toolCall.function.arguments); } catch { toolArgs = {}; }
+
+          console.log(`[image-search] Tool ${toolName}:`, toolArgs);
+
+          let finalArgs = toolArgs;
+          const toolMeta = mcpTools.find((t) => t.name === toolName);
+          if (toolMeta?.inputSchema?.required?.includes("params") && !toolArgs.params) {
+            finalArgs = { params: toolArgs };
+          }
+          if (finalArgs.params) {
+            finalArgs.params.response_format = "json";
+          } else {
+            finalArgs.response_format = "json";
+          }
+
+          let toolResult;
+          try {
+            toolResult = await callMcpCached(KAPRUKA_MCP_URL, toolName, finalArgs);
+            processToolResponse(toolName, toolResult, products, orderRef);
+          } catch (err) {
+            console.error(`[image-search] Tool error ${toolName}:`, err.message);
+            toolResult = { content: [{ type: "text", text: `Error: ${err.message}` }], isError: true };
+          }
+
+          return { role: "tool", tool_call_id: toolCall.id, name: toolName, content: JSON.stringify(toolResult) };
+        });
+
+        const toolResponses = await Promise.all(toolPromises);
+        currentMessages.push(...toolResponses);
+        continue;
+      }
+
+      // Final turn
+      const cleanedContent = stripToolCallMarkup(fullContent);
+      history.push({ role: "assistant", content: cleanedContent });
+      trimHistory(history);
+      await saveHistory(sessionId, history, firstUserMessage, userId);
+
+      if (products.length > 0) emit({ type: "products", data: products });
+      if (orderRef.value) emit({ type: "order", data: orderRef.value });
+      emit({ type: "done" });
+      return res.end();
+    }
+
+    history.pop();
+    emit({ type: "error", message: "Tool execution loop limit exceeded." });
+    res.end();
+  } catch (err) {
+    console.error("Unexpected error in /chat/image-search:", err);
+    emit({ type: "error", message: "Something went wrong analyzing the image." });
+    res.end();
+  }
+});
+
 // ─── Warmup Endpoint (used by Vercel cron to prevent cold starts) ─────────────
 app.get("/warmup", (_req, res) => {
   res.json({ ok: true, warmedAt: new Date().toISOString() });
 });
+
 
 // ─── Server Start ─────────────────────────────────────────────────────────────
 if (!process.env.VERCEL) {
