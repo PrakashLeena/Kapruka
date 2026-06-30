@@ -12,12 +12,9 @@ import https from "https";
 import http from "http";
 import { MongoClient } from "mongodb";
 import { buildSystemPrompt } from "./systemPrompt.js";
-import { ImageService } from "./services/imageService.js";
 
 const PORT = process.env.PORT || 3000;
-const API_KEY = process.env.API_KEY;
-const BASE_URL = (process.env.BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "");
-const MODEL = process.env.CLAUDE_MODEL || "gpt-4o";
+const MODEL = process.env.CLAUDE_MODEL || "z-ai/glm-5.1";
 const KAPRUKA_MCP_URL = process.env.KAPRUKA_MCP_URL || "https://mcp.kapruka.com/mcp";
 const ALLOWED_ORIGIN = (process.env.ALLOWED_ORIGIN || "http://localhost:5173").replace(/\/$/, "");
 const MONGODB_URI = process.env.MONGODB_URI;
@@ -134,8 +131,8 @@ function stripToolCallMarkup(text) {
   return cleaned;
 }
 
-if (!API_KEY) {
-  console.warn("WARNING: API_KEY is not set in the environment variables.");
+if (!process.env.NVIDIA_API_KEY) {
+  console.warn("WARNING: NVIDIA_API_KEY is not set in the environment variables.");
 }
 if (!MONGODB_URI) {
   console.warn("WARNING: MONGODB_URI is not set. Chat history will not persist.");
@@ -246,7 +243,7 @@ app.use(cors({
   }
 }));
 
-app.use(express.json({ limit: "10mb" }));
+app.use(express.json({ limit: "2mb" }));
 
 // ─── MCP helpers ─────────────────────────────────────────────────────────────
 function mcpPost(baseUrl, payload, sessionId) {
@@ -724,38 +721,24 @@ app.post("/chats/migrate", async (req, res) => {
 
 // ─── Main Chat Endpoint ───────────────────────────────────────────────────────
 app.post("/chat", async (req, res) => {
-  if (!API_KEY) {
-    return res.status(500).json({ error: "API_KEY is not configured on the server." });
+  if (!process.env.NVIDIA_API_KEY) {
+    return res.status(500).json({ error: "NVIDIA_API_KEY is not configured on the server." });
   }
 
-  const { sessionId, message, image, userId } = req.body ?? {};
+  const { sessionId, message, userId } = req.body ?? {};
 
   if (!sessionId || typeof sessionId !== "string") {
     return res.status(400).json({ error: "Missing sessionId" });
   }
-
-  const hasText = message && typeof message === "string" && message.trim();
-  const hasImage = image && typeof image === "string" && image.startsWith("data:image/");
-
-  if (!hasText && !hasImage) {
-    return res.status(400).json({ error: "Missing message or image" });
+  if (!message || typeof message !== "string" || !message.trim()) {
+    return res.status(400).json({ error: "Missing message" });
   }
 
   const history = await getHistory(sessionId, userId);
   const isFirstMessage = history.length === 0;
-  const firstUserMessage = isFirstMessage ? (message || "Sent an image") : null;
+  const firstUserMessage = isFirstMessage ? message : null;
 
-  if (hasImage) {
-    try {
-      ImageService.validate(image);
-      const content = ImageService.buildMultimodalPayload(message, image);
-      history.push({ role: "user", content });
-    } catch (err) {
-      return res.status(400).json({ error: err.message });
-    }
-  } else {
-    history.push({ role: "user", content: message });
-  }
+  history.push({ role: "user", content: message });
 
   try {
     const openAiTools = await getOpenAiTools();
@@ -788,10 +771,10 @@ app.post("/chat", async (req, res) => {
         requestBody.tools = openAiTools;
       }
 
-      const response = await fetch(`${BASE_URL}/chat/completions`, {
+      const response = await fetch(`${process.env.NVIDIA_BASE_URL}/chat/completions`, {
         method: "POST",
         headers: {
-          "Authorization": `Bearer ${API_KEY}`,
+          "Authorization": `Bearer ${process.env.NVIDIA_API_KEY}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify(requestBody),
@@ -799,7 +782,7 @@ app.post("/chat", async (req, res) => {
 
       if (!response.ok) {
         const errText = await response.text();
-        console.error("LLM API error:", response.status, errText);
+        console.error("Nvidia API error:", response.status, errText);
         history.pop(); // rollback user message on failure
         return res.status(502).json({ error: "The agent had trouble responding. Please try again." });
       }
@@ -902,10 +885,10 @@ async function* streamLLMCall(messages, tools) {
   };
   if (tools && tools.length > 0) requestBody.tools = tools;
 
-  const response = await fetch(`${BASE_URL}/chat/completions`, {
+  const response = await fetch(`${process.env.NVIDIA_BASE_URL}/chat/completions`, {
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${API_KEY}`,
+      "Authorization": `Bearer ${process.env.NVIDIA_API_KEY}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(requestBody),
@@ -913,7 +896,7 @@ async function* streamLLMCall(messages, tools) {
 
   if (!response.ok) {
     const errText = await response.text();
-    throw new Error(`LLM API error: ${response.status} — ${errText}`);
+    throw new Error(`NVIDIA API error: ${response.status} — ${errText}`);
   }
 
   const reader = response.body.getReader();
@@ -960,8 +943,8 @@ async function* streamLLMCall(messages, tools) {
  *   { type: "error",    message: "..." } — fatal error
  */
 app.post("/chat/stream", async (req, res) => {
-  if (!API_KEY) {
-    return res.status(500).json({ error: "API_KEY is not configured on the server." });
+  if (!process.env.NVIDIA_API_KEY) {
+    return res.status(500).json({ error: "NVIDIA_API_KEY is not configured on the server." });
   }
 
   // ── SSE headers ────────────────────────────────────────────────────────────
@@ -977,37 +960,22 @@ app.post("/chat/stream", async (req, res) => {
 
   const emit = (obj) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
 
-  const { sessionId, message, image, userId } = req.body ?? {};
+  const { sessionId, message, userId } = req.body ?? {};
 
   if (!sessionId || typeof sessionId !== "string") {
     emit({ type: "error", message: "Missing sessionId" });
     return res.end();
   }
-
-  const hasText = message && typeof message === "string" && message.trim();
-  const hasImage = image && typeof image === "string" && image.startsWith("data:image/");
-
-  if (!hasText && !hasImage) {
-    emit({ type: "error", message: "Missing message or image" });
+  if (!message || typeof message !== "string" || !message.trim()) {
+    emit({ type: "error", message: "Missing message" });
     return res.end();
   }
 
   const history = await getHistory(sessionId, userId);
   const isFirstMessage = history.length === 0;
-  const firstUserMessage = isFirstMessage ? (message || "Sent an image") : null;
+  const firstUserMessage = isFirstMessage ? message : null;
 
-  if (hasImage) {
-    try {
-      ImageService.validate(image);
-      const content = ImageService.buildMultimodalPayload(message, image);
-      history.push({ role: "user", content });
-    } catch (err) {
-      emit({ type: "error", message: err.message });
-      return res.end();
-    }
-  } else {
-    history.push({ role: "user", content: message });
-  }
+  history.push({ role: "user", content: message });
 
   try {
     const openAiTools = await getOpenAiTools();
