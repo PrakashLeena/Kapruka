@@ -15,8 +15,8 @@ import { buildSystemPrompt } from "./systemPrompt.js";
 import { ImageService } from "./services/imageService.js";
 
 const PORT = process.env.PORT || 3000;
-const API_KEY = process.env.OPENAI_API_KEY || process.env.NVIDIA_API_KEY;
-const BASE_URL = (process.env.OPENAI_BASE_URL || process.env.NVIDIA_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "");
+const API_KEY = process.env.API_KEY;
+const BASE_URL = (process.env.BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "");
 const MODEL = process.env.CLAUDE_MODEL || "gpt-4o";
 const KAPRUKA_MCP_URL = process.env.KAPRUKA_MCP_URL || "https://mcp.kapruka.com/mcp";
 const ALLOWED_ORIGIN = (process.env.ALLOWED_ORIGIN || "http://localhost:5173").replace(/\/$/, "");
@@ -135,7 +135,7 @@ function stripToolCallMarkup(text) {
 }
 
 if (!API_KEY) {
-  console.warn("WARNING: Neither OPENAI_API_KEY nor NVIDIA_API_KEY is set in the environment variables.");
+  console.warn("WARNING: API_KEY is not set in the environment variables.");
 }
 if (!MONGODB_URI) {
   console.warn("WARNING: MONGODB_URI is not set. Chat history will not persist.");
