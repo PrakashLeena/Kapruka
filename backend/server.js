@@ -15,104 +15,12 @@ import { buildSystemPrompt } from "./systemPrompt.js";
 import { ImageService } from "./services/imageService.js";
 
 const PORT = process.env.PORT || 3000;
+const API_KEY = process.env.OPENAI_API_KEY || process.env.NVIDIA_API_KEY;
+const BASE_URL = (process.env.OPENAI_BASE_URL || process.env.NVIDIA_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, "");
+const MODEL = process.env.CLAUDE_MODEL || "gpt-4o";
 const KAPRUKA_MCP_URL = process.env.KAPRUKA_MCP_URL || "https://mcp.kapruka.com/mcp";
 const ALLOWED_ORIGIN = (process.env.ALLOWED_ORIGIN || "http://localhost:5173").replace(/\/$/, "");
 const MONGODB_URI = process.env.MONGODB_URI;
-
-// ─── Provider Fallback Pool ───────────────────────────────────────────────────
-// Each provider has its own API key, base URL, and model name.
-// Providers are tried in order: OpenAI first, then Gemini.
-// If a provider returns 401/429/5xx the next one is tried automatically.
-const PROVIDERS = [
-  {
-    name: "OpenAI",
-    key: process.env.OPENAI_API_KEY || process.env.NVIDIA_API_KEY,
-    baseUrl: (process.env.OPENAI_BASE_URL || process.env.NVIDIA_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, ""),
-    model: process.env.CLAUDE_MODEL || "gpt-4o",
-  },
-  {
-    name: "Gemini",
-    key: process.env.GEMINI_API_KEY_1 || process.env.GEMINI_API_KEY_2,
-    baseUrl: (process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta/openai").replace(/\/$/, ""),
-    model: process.env.GEMINI_MODEL || "gemini-2.0-flash",
-  },
-].filter(p => p.key); // drop providers without a configured key
-
-// Convenience aliases kept for any remaining legacy references
-const API_KEY = PROVIDERS[0]?.key ?? null;
-const BASE_URL = PROVIDERS[0]?.baseUrl ?? "https://api.openai.com/v1";
-const MODEL    = PROVIDERS[0]?.model    ?? "gpt-4o";
-
-/**
- * Makes an LLM /chat/completions request, automatically falling back to the
- * next configured provider on 401 (bad key), 429 (quota exceeded), or 5xx.
- *
- * @param {object[]} messages   - OpenAI-format message array
- * @param {object[]|null} tools - OpenAI-format tools array (or null/[])
- * @param {boolean} stream      - Whether to request SSE streaming
- * @returns {Promise<Response>} The first successful response, or the last
- *                              failure response if all providers are exhausted
- */
-async function fetchLLM(messages, tools, stream = false) {
-  if (PROVIDERS.length === 0) {
-    throw new Error("No API providers configured. Set OPENAI_API_KEY or GEMINI_API_KEY_1 in .env");
-  }
-
-  let lastError = null;
-  for (let i = 0; i < PROVIDERS.length; i++) {
-    const provider = PROVIDERS[i];
-    const requestBody = {
-      model: provider.model,
-      messages,
-      temperature: 0.2,
-      top_p: 1,
-    };
-    if (stream) requestBody.stream = true;
-    if (tools && tools.length > 0) requestBody.tools = tools;
-
-    let response;
-    try {
-      response = await fetch(`${provider.baseUrl}/chat/completions`, {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${provider.key}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(requestBody),
-      });
-    } catch (networkErr) {
-      // Network-level failure (DNS, connection refused, timeout, etc.)
-      lastError = networkErr;
-      const hasNext = i < PROVIDERS.length - 1;
-      console.error(`[provider-fallback] ${provider.name} network error: ${networkErr.message}.${hasNext ? ` Switching to ${PROVIDERS[i + 1].name}...` : " No more providers."}`);
-      if (hasNext) continue;
-      // All providers exhausted via network errors — throw so caller returns 500
-      throw new Error(`All LLM providers failed. Last network error (${provider.name}): ${networkErr.message}`);
-    }
-
-    // HTTP success
-    if (response.ok) {
-      if (i > 0) console.log(`[provider-fallback] Successfully switched to ${provider.name}.`);
-      return response;
-    }
-
-    // HTTP error — decide whether to try next provider
-    const canRetry = !response.ok;
-    if (canRetry && i < PROVIDERS.length - 1) {
-      // Clone the status so we can log it (body is consumed by caller only for last failure)
-      const statusText = response.status;
-      console.warn(`[provider-fallback] ${provider.name} returned HTTP ${statusText}. Switching to ${PROVIDERS[i + 1].name}...`);
-      continue;
-    }
-
-    // Non-retryable error (e.g. 403) or last provider — return to caller to handle
-    return response;
-  }
-
-  // Should never reach here, but just in case
-  throw lastError ?? new Error("All LLM providers failed unexpectedly.");
-}
-
 
 // Keep-Alive HTTP/HTTPS agents to optimize MCP latency by reusing TCP/TLS connections
 const keepAliveHttpAgent = new http.Agent({ keepAlive: true, keepAliveMsecs: 10000 });
@@ -226,11 +134,8 @@ function stripToolCallMarkup(text) {
   return cleaned;
 }
 
-if (PROVIDERS.length === 0) {
-  console.warn("WARNING: No API providers configured. Set OPENAI_API_KEY or GEMINI_API_KEY_1 in the environment variables.");
-} else {
-  const summary = PROVIDERS.map(p => p.name).join(" → ");
-  console.log(`[provider-pool] ${PROVIDERS.length} provider(s) loaded: ${summary}. Fallback is ${PROVIDERS.length > 1 ? "enabled" : "disabled"}.`);
+if (!API_KEY) {
+  console.warn("WARNING: Neither OPENAI_API_KEY nor NVIDIA_API_KEY is set in the environment variables.");
 }
 if (!MONGODB_URI) {
   console.warn("WARNING: MONGODB_URI is not set. Chat history will not persist.");
@@ -634,7 +539,6 @@ app.get("/", (_req, res) => res.send("Kapruka Agent Backend is running successfu
 
 app.get("/health", (_req, res) => res.json({
   ok: true,
-  providers: PROVIDERS.map(p => ({ name: p.name, model: p.model, keyPrefix: p.key?.slice(0, 12) + "..." })),
   mongo: { connected: !!db },
   mcp: {
     url: KAPRUKA_MCP_URL,
@@ -643,47 +547,6 @@ app.get("/health", (_req, res) => res.json({
     lastError: mcpLoadError,
   },
 }));
-
-/**
- * GET /debug-llm
- * Tests each configured provider with a minimal ping request.
- * Returns status per provider so you can see which key is working.
- */
-app.get("/debug-llm", async (req, res) => {
-  if (PROVIDERS.length === 0) {
-    return res.status(500).json({ error: "No providers configured." });
-  }
-  const results = [];
-  for (const provider of PROVIDERS) {
-    try {
-      const response = await fetch(`${provider.baseUrl}/chat/completions`, {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${provider.key}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: provider.model,
-          messages: [{ role: "user", content: "Say OK" }],
-          max_tokens: 5,
-        }),
-      });
-      const text = await response.text();
-      let parsed = null;
-      try { parsed = JSON.parse(text); } catch {}
-      results.push({
-        provider: provider.name,
-        model: provider.model,
-        status: response.status,
-        ok: response.ok,
-        reply: parsed?.choices?.[0]?.message?.content ?? text.slice(0, 200),
-      });
-    } catch (err) {
-      results.push({ provider: provider.name, model: provider.model, error: err.message });
-    }
-  }
-  res.json({ results });
-});
 
 app.get("/debug-mcp", async (req, res) => {
   try {
@@ -861,8 +724,8 @@ app.post("/chats/migrate", async (req, res) => {
 
 // ─── Main Chat Endpoint ───────────────────────────────────────────────────────
 app.post("/chat", async (req, res) => {
-  if (API_KEY_POOL.length === 0) {
-    return res.status(500).json({ error: "No API keys are configured on the server." });
+  if (!API_KEY) {
+    return res.status(500).json({ error: "API_KEY is not configured on the server." });
   }
 
   const { sessionId, message, image, userId } = req.body ?? {};
@@ -914,11 +777,25 @@ app.post("/chat", async (req, res) => {
 
     // Max 10 sequential tool calls per user interaction loop
     for (let loop = 0; loop < 10; loop++) {
-      const response = await fetchLLM(
-        currentMessages,
-        openAiTools.length > 0 ? openAiTools : null,
-        false
-      );
+      const requestBody = {
+        model: MODEL,
+        messages: currentMessages,
+        temperature: 0.2,
+        top_p: 1,
+      };
+
+      if (openAiTools.length > 0) {
+        requestBody.tools = openAiTools;
+      }
+
+      const response = await fetch(`${BASE_URL}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(requestBody),
+      });
 
       if (!response.ok) {
         const errText = await response.text();
@@ -1003,10 +880,9 @@ app.post("/chat", async (req, res) => {
     history.pop();
     res.status(502).json({ error: "Tool execution loop limit exceeded." });
   } catch (err) {
-    console.error("Unexpected error in /chat:", err.message);
-    console.error(err.stack);
+    console.error("Unexpected error in /chat:", err);
     history.pop();
-    res.status(500).json({ error: "Something went wrong on our end.", detail: err.message });
+    res.status(500).json({ error: "Something went wrong on our end." });
   }
 });
 
@@ -1017,20 +893,39 @@ app.post("/chat", async (req, res) => {
  * parsed JSON chunks. Handles SSE framing internally.
  */
 async function* streamLLMCall(messages, tools) {
-  const response = await fetchLLM(messages, tools, true);
+  const requestBody = {
+    model: MODEL,
+    messages,
+    temperature: 0.2,
+    top_p: 1,
+    stream: true,
+  };
+  if (tools && tools.length > 0) requestBody.tools = tools;
+
+  const response = await fetch(`${BASE_URL}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(requestBody),
+  });
 
   if (!response.ok) {
     const errText = await response.text();
     throw new Error(`LLM API error: ${response.status} — ${errText}`);
   }
 
+  const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
 
   try {
-    for await (const chunk of response.body) {
-      const chunkStr = typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
-      buffer += chunkStr;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split("\n");
       buffer = lines.pop(); // retain incomplete last line
 
@@ -1046,9 +941,8 @@ async function* streamLLMCall(messages, tools) {
         }
       }
     }
-  } catch (err) {
-    console.error("Stream reading error:", err.message);
-    throw err;
+  } finally {
+    reader.releaseLock();
   }
 }
 
@@ -1324,7 +1218,7 @@ app.post("/chat/stream", async (req, res) => {
   } catch (err) {
     console.error("Unexpected error in /chat/stream:", err);
     history.pop();
-    emit({ type: "error", message: `Something went wrong on our end: ${err.message}` });
+    emit({ type: "error", message: "Something went wrong on our end." });
     res.end();
   }
 });
