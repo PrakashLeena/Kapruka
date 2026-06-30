@@ -7,14 +7,16 @@
     }
   },
   "rewrites": [
-    { "source": "/chat",        "destination": "/api/index.js" },
-    { "source": "/chat/stream", "destination": "/api/index.js" },
-    { "source": "/health",      "destination": "/api/index.js" },
-    { "source": "/warmup",      "destination": "/api/index.js" },
-    { "source": "/debug-mcp",   "destination": "/api/index.js" },
-    { "source": "/chats",       "destination": "/api/index.js" },
-    { "source": "/chats/:id",   "destination": "/api/index.js" },
-    { "source": "/(.*)",        "destination": "/index.html"   }
+    { "source": "/chat",           "destination": "/api/index.js" },
+    { "source": "/chat/stream",    "destination": "/api/index.js" },
+    { "source": "/health",         "destination": "/api/index.js" },
+    { "source": "/warmup",         "destination": "/api/index.js" },
+    { "source": "/debug-mcp",      "destination": "/api/index.js" },
+    { "source": "/debug-llm",      "destination": "/api/index.js" },
+    { "source": "/chats",          "destination": "/api/index.js" },
+    { "source": "/chats/migrate",  "destination": "/api/index.js" },
+    { "source": "/chats/:id",      "destination": "/api/index.js" },
+    { "source": "/(.*)",           "destination": "/index.html"   }
   ],
   "crons": [
     {

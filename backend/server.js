@@ -58,7 +58,7 @@ async function fetchLLM(messages, tools, stream = false) {
     throw new Error("No API providers configured. Set OPENAI_API_KEY or GEMINI_API_KEY_1 in .env");
   }
 
-  let lastResponse = null;
+  let lastError = null;
   for (let i = 0; i < PROVIDERS.length; i++) {
     const provider = PROVIDERS[i];
     const requestBody = {
@@ -70,32 +70,49 @@ async function fetchLLM(messages, tools, stream = false) {
     if (stream) requestBody.stream = true;
     if (tools && tools.length > 0) requestBody.tools = tools;
 
-    const response = await fetch(`${provider.baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${provider.key}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(requestBody),
-    });
+    let response;
+    try {
+      response = await fetch(`${provider.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${provider.key}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(requestBody),
+      });
+    } catch (networkErr) {
+      // Network-level failure (DNS, connection refused, timeout, etc.)
+      lastError = networkErr;
+      const hasNext = i < PROVIDERS.length - 1;
+      console.error(`[provider-fallback] ${provider.name} network error: ${networkErr.message}.${hasNext ? ` Switching to ${PROVIDERS[i + 1].name}...` : " No more providers."}`);
+      if (hasNext) continue;
+      // All providers exhausted via network errors — throw so caller returns 500
+      throw new Error(`All LLM providers failed. Last network error (${provider.name}): ${networkErr.message}`);
+    }
 
+    // HTTP success
     if (response.ok) {
       if (i > 0) console.log(`[provider-fallback] Successfully switched to ${provider.name}.`);
       return response;
     }
 
-    lastResponse = response;
-    const canRetry = response.status === 401 || response.status === 429 || response.status >= 500;
+    // HTTP error — decide whether to try next provider
+    const canRetry = !response.ok;
     if (canRetry && i < PROVIDERS.length - 1) {
-      console.warn(`[provider-fallback] ${provider.name} returned HTTP ${response.status}. Switching to ${PROVIDERS[i + 1].name}...`);
+      // Clone the status so we can log it (body is consumed by caller only for last failure)
+      const statusText = response.status;
+      console.warn(`[provider-fallback] ${provider.name} returned HTTP ${statusText}. Switching to ${PROVIDERS[i + 1].name}...`);
       continue;
     }
 
-    return response; // non-retryable error, or last provider — let caller handle it
+    // Non-retryable error (e.g. 403) or last provider — return to caller to handle
+    return response;
   }
 
-  return lastResponse;
+  // Should never reach here, but just in case
+  throw lastError ?? new Error("All LLM providers failed unexpectedly.");
 }
+
 
 // Keep-Alive HTTP/HTTPS agents to optimize MCP latency by reusing TCP/TLS connections
 const keepAliveHttpAgent = new http.Agent({ keepAlive: true, keepAliveMsecs: 10000 });
@@ -617,6 +634,7 @@ app.get("/", (_req, res) => res.send("Kapruka Agent Backend is running successfu
 
 app.get("/health", (_req, res) => res.json({
   ok: true,
+  providers: PROVIDERS.map(p => ({ name: p.name, model: p.model, keyPrefix: p.key?.slice(0, 12) + "..." })),
   mongo: { connected: !!db },
   mcp: {
     url: KAPRUKA_MCP_URL,
@@ -625,6 +643,47 @@ app.get("/health", (_req, res) => res.json({
     lastError: mcpLoadError,
   },
 }));
+
+/**
+ * GET /debug-llm
+ * Tests each configured provider with a minimal ping request.
+ * Returns status per provider so you can see which key is working.
+ */
+app.get("/debug-llm", async (req, res) => {
+  if (PROVIDERS.length === 0) {
+    return res.status(500).json({ error: "No providers configured." });
+  }
+  const results = [];
+  for (const provider of PROVIDERS) {
+    try {
+      const response = await fetch(`${provider.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${provider.key}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: provider.model,
+          messages: [{ role: "user", content: "Say OK" }],
+          max_tokens: 5,
+        }),
+      });
+      const text = await response.text();
+      let parsed = null;
+      try { parsed = JSON.parse(text); } catch {}
+      results.push({
+        provider: provider.name,
+        model: provider.model,
+        status: response.status,
+        ok: response.ok,
+        reply: parsed?.choices?.[0]?.message?.content ?? text.slice(0, 200),
+      });
+    } catch (err) {
+      results.push({ provider: provider.name, model: provider.model, error: err.message });
+    }
+  }
+  res.json({ results });
+});
 
 app.get("/debug-mcp", async (req, res) => {
   try {
@@ -944,9 +1003,10 @@ app.post("/chat", async (req, res) => {
     history.pop();
     res.status(502).json({ error: "Tool execution loop limit exceeded." });
   } catch (err) {
-    console.error("Unexpected error in /chat:", err);
+    console.error("Unexpected error in /chat:", err.message);
+    console.error(err.stack);
     history.pop();
-    res.status(500).json({ error: "Something went wrong on our end." });
+    res.status(500).json({ error: "Something went wrong on our end.", detail: err.message });
   }
 });
 
@@ -964,16 +1024,13 @@ async function* streamLLMCall(messages, tools) {
     throw new Error(`LLM API error: ${response.status} — ${errText}`);
   }
 
-  const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
 
   try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
+    for await (const chunk of response.body) {
+      const chunkStr = typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
+      buffer += chunkStr;
       const lines = buffer.split("\n");
       buffer = lines.pop(); // retain incomplete last line
 
@@ -989,8 +1046,9 @@ async function* streamLLMCall(messages, tools) {
         }
       }
     }
-  } finally {
-    reader.releaseLock();
+  } catch (err) {
+    console.error("Stream reading error:", err.message);
+    throw err;
   }
 }
 
@@ -1266,7 +1324,7 @@ app.post("/chat/stream", async (req, res) => {
   } catch (err) {
     console.error("Unexpected error in /chat/stream:", err);
     history.pop();
-    emit({ type: "error", message: "Something went wrong on our end." });
+    emit({ type: "error", message: `Something went wrong on our end: ${err.message}` });
     res.end();
   }
 });
