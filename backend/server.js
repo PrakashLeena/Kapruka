@@ -121,17 +121,18 @@ const TOOL_CALL_PATTERNS = [
 /**
  * Remove all raw tool-call markup from a model response string.
  * @param {string} text
+ * @param {boolean} [isFinal=false]
  * @returns {string}
  */
-function stripToolCallMarkup(text) {
+function stripToolCallMarkup(text, isFinal = false) {
   if (!text) return text;
   let cleaned = text;
   for (const pattern of TOOL_CALL_PATTERNS) {
     cleaned = cleaned.replace(pattern, "");
   }
   // Collapse multiple blank lines left behind by the removal
-  cleaned = cleaned.replace(/\n{3,}/g, "\n\n").trim();
-  return cleaned;
+  cleaned = cleaned.replace(/\n{3,}/g, "\n\n");
+  return isFinal ? cleaned.trim() : cleaned;
 }
 
 const _providerStatus = getProviderStatus();
@@ -842,7 +843,7 @@ app.post("/chat", async (req, res) => {
 
       // Final text response reached
       const rawText = assistantMessage.content || "";
-      const text = stripToolCallMarkup(rawText);
+      const text = stripToolCallMarkup(rawText, true);
       if (rawText !== text) {
         console.warn("[/chat] Stripped tool_call markup from model response.");
       }
@@ -1147,7 +1148,7 @@ app.post("/chat/stream", async (req, res) => {
       }
 
       // ── Final text turn: persist + emit metadata + close stream ──────────
-      const cleanedContent = stripToolCallMarkup(fullContent);
+      const cleanedContent = stripToolCallMarkup(fullContent, true);
       if (cleanedContent !== fullContent) {
         console.warn("[stream] Stripped tool_call markup from final response.");
       }
@@ -1382,7 +1383,7 @@ app.post("/chat/image-search", async (req, res) => {
       }
 
       // Final turn
-      const cleanedContent = stripToolCallMarkup(fullContent);
+      const cleanedContent = stripToolCallMarkup(fullContent, true);
       history.push({ role: "assistant", content: cleanedContent });
       trimHistory(history);
       await saveHistory(sessionId, history, firstUserMessage, userId);

@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import ReactMarkdown from "react-markdown";
 import { SpeechPlayerService } from "../services/SpeechPlayer.js";
 import OrderCard from "./OrderCard.jsx";
 
@@ -43,6 +44,7 @@ export default function ChatMessage({ message, onAddToCart, speakLang = "english
     );
   }
 
+
   return (
     <div className="flex items-start gap-2 min-w-0">
       <div className="shrink-0 w-7 h-7 rounded-full bg-teal text-white flex items-center justify-center text-xs font-semibold font-display mt-0.5">
@@ -50,8 +52,26 @@ export default function ChatMessage({ message, onAddToCart, speakLang = "english
       </div>
       <div className="flex flex-col gap-2.5 max-w-[85%] min-w-0">
         {message.text && (
-          <div className="relative bg-white border border-cream-200 border-l-[3px] border-l-teal px-4 py-2.5 rounded-2xl rounded-bl-sm text-sm leading-relaxed pr-8 break-words whitespace-pre-wrap min-w-0">
-            {message.text}
+          <div className="relative bg-white border border-cream-200 border-l-[3px] border-l-teal px-4 py-2.5 rounded-2xl rounded-bl-sm text-sm leading-relaxed pr-8 break-words min-w-0">
+            <ReactMarkdown
+              components={{
+                // Keep paragraphs inline without adding margins during streaming
+                p: ({ children }) => <p className="mb-1 last:mb-0">{children}</p>,
+                // Style bullet / numbered lists
+                ul: ({ children }) => <ul className="list-disc list-inside mb-1 space-y-0.5">{children}</ul>,
+                ol: ({ children }) => <ol className="list-decimal list-inside mb-1 space-y-0.5">{children}</ol>,
+                li: ({ children }) => <li className="leading-snug">{children}</li>,
+                // Bold and italic
+                strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+                em: ({ children }) => <em className="italic">{children}</em>,
+                // Inline code
+                code: ({ children }) => (
+                  <code className="bg-cream-100 text-terracotta text-xs px-1 py-0.5 rounded font-mono">{children}</code>
+                ),
+              }}
+            >
+              {message.text}
+            </ReactMarkdown>
             {/* Blinking cursor shown while the LLM is still streaming tokens */}
             {message.streaming && (
               <span
