@@ -12,9 +12,9 @@ import https from "https";
 import http from "http";
 import { MongoClient } from "mongodb";
 import { buildSystemPrompt } from "./systemPrompt.js";
+import { callPrimaryStream, callPrimaryNonStream, analyzeImageForQuery, getProviderStatus } from "./aiRouter.js";
 
 const PORT = process.env.PORT || 3000;
-const MODEL = process.env.CLAUDE_MODEL || "z-ai/glm-5.1";
 const KAPRUKA_MCP_URL = process.env.KAPRUKA_MCP_URL || "https://mcp.kapruka.com/mcp";
 const ALLOWED_ORIGIN = (process.env.ALLOWED_ORIGIN || "http://localhost:5173").replace(/\/$/, "");
 const MONGODB_URI = process.env.MONGODB_URI;
@@ -131,8 +131,13 @@ function stripToolCallMarkup(text) {
   return cleaned;
 }
 
-if (!process.env.NVIDIA_API_KEY) {
-  console.warn("WARNING: NVIDIA_API_KEY is not set in the environment variables.");
+const _providerStatus = getProviderStatus();
+if (!_providerStatus.tgi && !_providerStatus.openai) {
+  console.warn("WARNING: No LLM provider configured. Set TGI_ENDPOINT_URL or OPENAI_API_KEY.");
+} else if (!_providerStatus.tgi) {
+  console.log("\u2139\uFE0F  Primary: OpenAI GPT-4o (TGI_ENDPOINT_URL not set — fine-tuned model not active).");
+} else {
+  console.log("\u2705 Primary: TGI (fine-tuned Qwen3-14B) | Fallback: OpenAI GPT-4o");
 }
 if (!MONGODB_URI) {
   console.warn("WARNING: MONGODB_URI is not set. Chat history will not persist.");
@@ -536,6 +541,7 @@ app.get("/", (_req, res) => res.send("Kapruka Agent Backend is running successfu
 
 app.get("/health", (_req, res) => res.json({
   ok: true,
+  providers: getProviderStatus(),
   mongo: { connected: !!db },
   mcp: {
     url: KAPRUKA_MCP_URL,
@@ -721,8 +727,9 @@ app.post("/chats/migrate", async (req, res) => {
 
 // ─── Main Chat Endpoint ───────────────────────────────────────────────────────
 app.post("/chat", async (req, res) => {
-  if (!process.env.NVIDIA_API_KEY) {
-    return res.status(500).json({ error: "NVIDIA_API_KEY is not configured on the server." });
+  const { tgi: _chatTgi, openai: _chatOpenai } = getProviderStatus();
+  if (!_chatTgi && !_chatOpenai) {
+    return res.status(500).json({ error: "No LLM provider configured on the server (set TGI_ENDPOINT_URL or OPENAI_API_KEY)." });
   }
 
   const { sessionId, message, userId } = req.body ?? {};
@@ -760,34 +767,20 @@ app.post("/chat", async (req, res) => {
 
     // Max 10 sequential tool calls per user interaction loop
     for (let loop = 0; loop < 10; loop++) {
-      const requestBody = {
-        model: MODEL,
-        messages: currentMessages,
-        temperature: 0.2,
-        top_p: 1,
-      };
-
-      if (openAiTools.length > 0) {
-        requestBody.tools = openAiTools;
-      }
-
-      const response = await fetch(`${process.env.NVIDIA_BASE_URL}/chat/completions`, {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${process.env.NVIDIA_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(requestBody),
-      });
-
-      if (!response.ok) {
-        const errText = await response.text();
-        console.error("Nvidia API error:", response.status, errText);
+      let _chatData, _chatProvider;
+      try {
+        ({ data: _chatData, provider: _chatProvider } = await callPrimaryNonStream(
+          currentMessages,
+          openAiTools.length > 0 ? openAiTools : undefined
+        ));
+        console.log(`[/chat] LLM provider: ${_chatProvider}`);
+      } catch (err) {
+        console.error("[/chat] All LLM providers failed:", err.message);
         history.pop(); // rollback user message on failure
         return res.status(502).json({ error: "The agent had trouble responding. Please try again." });
       }
 
-      const data = await response.json();
+      const data = _chatData;
       const assistantMessage = data.choices?.[0]?.message;
 
       if (!assistantMessage) {
@@ -876,28 +869,13 @@ app.post("/chat", async (req, res) => {
  * parsed JSON chunks. Handles SSE framing internally.
  */
 async function* streamLLMCall(messages, tools) {
-  const requestBody = {
-    model: MODEL,
+  // Delegates provider selection to aiRouter (TGI → OpenAI GPT-4o).
+  // The SSE wire format is identical across both providers (OpenAI-compatible).
+  const { response, provider } = await callPrimaryStream(
     messages,
-    temperature: 0.2,
-    top_p: 1,
-    stream: true,
-  };
-  if (tools && tools.length > 0) requestBody.tools = tools;
-
-  const response = await fetch(`${process.env.NVIDIA_BASE_URL}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${process.env.NVIDIA_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(requestBody),
-  });
-
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(`NVIDIA API error: ${response.status} — ${errText}`);
-  }
+    tools && tools.length > 0 ? tools : undefined
+  );
+  console.log(`[streamLLMCall] provider: ${provider}`);
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -943,8 +921,9 @@ async function* streamLLMCall(messages, tools) {
  *   { type: "error",    message: "..." } — fatal error
  */
 app.post("/chat/stream", async (req, res) => {
-  if (!process.env.NVIDIA_API_KEY) {
-    return res.status(500).json({ error: "NVIDIA_API_KEY is not configured on the server." });
+  const { tgi: _streamTgi, openai: _streamOpenai } = getProviderStatus();
+  if (!_streamTgi && !_streamOpenai) {
+    return res.status(500).json({ error: "No LLM provider configured on the server (set TGI_ENDPOINT_URL or OPENAI_API_KEY)." });
   }
 
   // ── SSE headers ────────────────────────────────────────────────────────────
@@ -1202,12 +1181,11 @@ app.post("/chat/stream", async (req, res) => {
  * SSE events: delta | products | done | error  (same schema as /chat/stream)
  */
 app.post("/chat/image-search", async (req, res) => {
-  const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-  if (!GEMINI_API_KEY || GEMINI_API_KEY === "your_gemini_api_key_here") {
-    return res.status(500).json({ error: "GEMINI_API_KEY is not configured on the server." });
-  }
-  if (!process.env.NVIDIA_API_KEY) {
-    return res.status(500).json({ error: "NVIDIA_API_KEY is not configured on the server." });
+  // Image analysis uses GPT-4o Vision (primary) or Gemini Vision (fallback).
+  // At least one must be configured.
+  const { openai: _imgOpenai, gemini: _imgGemini } = getProviderStatus();
+  if (!_imgOpenai && !_imgGemini) {
+    return res.status(500).json({ error: "No image analysis provider configured (set OPENAI_API_KEY or GEMINI_API_KEY)." });
   }
 
   // ── SSE headers ────────────────────────────────────────────────────────────
@@ -1235,56 +1213,26 @@ app.post("/chat/image-search", async (req, res) => {
   }
 
   try {
-    // ── Step 1: Use Gemini Vision to extract a product search query ──────────
-    const geminiPayload = {
-      contents: [
-        {
-          parts: [
-            {
-              inline_data: {
-                mime_type: mimeType || "image/jpeg",
-                data: imageBase64,
-              },
-            },
-            {
-              text: `You are a shopping assistant for Kapruka.com, a Sri Lankan e-commerce site.
-Look at this product image and extract a concise, specific product search query (3-8 words) 
-that would find this exact product or similar products on an e-commerce platform.
-Focus on: product type, key features, brand if visible, color/style if distinctive.
-Reply with ONLY the search query — no explanation, no punctuation at the end.
-Examples: "dark chocolate gift box", "birthday cake chocolate", "silk saree blue".`,
-            },
-          ],
-        },
-      ],
-      generationConfig: { temperature: 0.1, maxOutputTokens: 64 },
-    };
-
-    const geminiRes = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(geminiPayload),
-      }
-    );
-
-    if (!geminiRes.ok) {
-      const errText = await geminiRes.text();
-      console.error("Gemini Vision API error:", geminiRes.status, errText);
-      emit({ type: "error", message: "Image analysis failed. Please check your GEMINI_API_KEY." });
+    // ── Step 1: Extract a product search query from the image ─────────────────
+    // Tries GPT-4o Vision first; falls back to Gemini Vision automatically.
+    let extractedQuery, imageProvider;
+    try {
+      ({ query: extractedQuery, provider: imageProvider } = await analyzeImageForQuery(
+        imageBase64,
+        mimeType || "image/jpeg"
+      ));
+    } catch (err) {
+      console.error("[image-search] Image analysis failed:", err.message);
+      emit({ type: "error", message: "Image analysis failed. Please check your API keys or try a clearer photo." });
       return res.end();
     }
-
-    const geminiData = await geminiRes.json();
-    const extractedQuery = geminiData?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
 
     if (!extractedQuery) {
       emit({ type: "error", message: "Could not understand the image. Please try a clearer photo." });
       return res.end();
     }
 
-    console.log(`[image-search] Gemini extracted query: "${extractedQuery}"`);
+    console.log(`[image-search] Extracted query (via ${imageProvider}): "${extractedQuery}"`);
 
     // Emit the extracted query as a delta so the user sees what was understood
     emit({ type: "image_query", query: extractedQuery });
