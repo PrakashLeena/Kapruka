@@ -13,6 +13,9 @@ import http from "http";
 import { MongoClient } from "mongodb";
 import { buildSystemPrompt } from "./systemPrompt.js";
 import { callPrimaryStream, callPrimaryNonStream, analyzeImageForQuery, getProviderStatus } from "./aiRouter.js";
+import { romanToNativeScript } from "./services/transliterationService.js";
+import { synthesizeSpeech, isAzureTtsConfigured } from "./services/ttsService.js";
+
 
 const PORT = process.env.PORT || 3000;
 const KAPRUKA_MCP_URL = process.env.KAPRUKA_MCP_URL || "https://mcp.kapruka.com/mcp";
@@ -1397,6 +1400,38 @@ app.post("/chat/image-search", async (req, res) => {
     console.error("Unexpected error in /chat/image-search:", err);
     emit({ type: "error", message: "Something went wrong analyzing the image." });
     res.end();
+  }
+});
+
+// ─── Speech Synthesis Endpoint (Azure Cognitive Services + LLM Transliteration) ──
+app.post("/api/speech/synthesize", async (req, res) => {
+  const { text, language } = req.body || {};
+  if (!text || typeof text !== "string" || !text.trim()) {
+    return res.status(400).json({ error: "Missing text parameter." });
+  }
+  if (!language || !["sinhala", "tamil"].includes(language)) {
+    return res.status(400).json({ error: "Invalid or missing language parameter." });
+  }
+
+  // If Azure is not configured in .env, tell client to fall back to browser SpeechSynthesis
+  if (!isAzureTtsConfigured()) {
+    return res.status(503).json({ error: "Azure Speech Service is not configured." });
+  }
+
+  try {
+    // 1. Convert Romanized Singlish/Tanglish to native script if necessary
+    const nativeScriptText = await romanToNativeScript(text, language);
+
+    // 2. Synthesize audio buffer using Azure Speech REST API
+    const audioBuffer = await synthesizeSpeech(nativeScriptText, language);
+
+    // 3. Respond with audio binary stream
+    res.setHeader("Content-Type", "audio/mpeg");
+    res.setHeader("Cache-Control", "public, max-age=86400"); // Cache audio for 24 hours
+    return res.send(audioBuffer);
+  } catch (err) {
+    console.error("[/api/speech/synthesize] Error:", err.message);
+    return res.status(500).json({ error: "Failed to synthesize speech.", details: err.message });
   }
 });
 

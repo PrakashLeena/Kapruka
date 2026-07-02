@@ -127,6 +127,84 @@ function _pickVoice(lang = _currentLang) {
 
 // ── Public API ─────────────────────────────────────────────────────────────────
 
+let _currentAudio = null;
+const BACKEND_URL = (import.meta.env.VITE_BACKEND_URL || "http://localhost:3000").replace(/\/$/, "");
+
+/**
+ * Standard browser-based fallback speech synthesis when Azure is not configured or offline.
+ */
+function _speakBrowserFallback(text) {
+  if (!synth) {
+    _onEndCallbacks.forEach((fn) => {
+      try { fn(); } catch (e) {}
+    });
+    return;
+  }
+
+  let cleanText = _stripMarkdown(text);
+  if (!cleanText) return;
+
+  let voice = _pickVoice();
+
+  // TTS Fallback and Transliteration Routing:
+  if (_currentLang === "tamil") {
+    if (!hasTamilScript(cleanText)) {
+      voice = _pickVoice("english");
+      console.log("[SpeechPlayer] Speaking Tanglish using English voice:", voice?.name);
+    } else {
+      const isNativeTamilVoice = voice && (
+        voice.lang.startsWith("ta") || 
+        voice.name.toLowerCase().includes("tamil")
+      );
+      if (!isNativeTamilVoice) {
+        console.log("[SpeechPlayer] No native Tamil voice found. Transliterating Tamil script for fallback TTS...");
+        cleanText = transliterateTamil(cleanText);
+      }
+    }
+  } else if (_currentLang === "sinhala") {
+    if (!hasSinhalaScript(cleanText)) {
+      voice = _pickVoice("english");
+      console.log("[SpeechPlayer] Speaking Singlish using English voice:", voice?.name);
+    } else {
+      const isNativeSinhalaVoice = voice && (
+        voice.lang.startsWith("si") || 
+        voice.name.toLowerCase().includes("sinhala") || 
+        voice.name.toLowerCase().includes("sinhal")
+      );
+      if (!isNativeSinhalaVoice) {
+        console.log("[SpeechPlayer] No native Sinhala voice found. Transliterating Sinhala script for fallback TTS...");
+        cleanText = transliterateSinhala(cleanText);
+      }
+    }
+  }
+
+  const utterance = new SpeechSynthesisUtterance(cleanText);
+  utterance.rate = 1.0;
+  utterance.pitch = 1.0;
+  utterance.volume = 1.0;
+
+  if (voice) utterance.voice = voice;
+
+  utterance.onend = () => {
+    _onEndCallbacks.forEach((fn) => {
+      try { fn(); } catch (e) { console.error(e); }
+    });
+  };
+
+  utterance.onerror = (event) => {
+    if (event.error === "interrupted" || event.error === "canceled") return;
+    console.warn("[SpeechPlayer] utterance error:", event.error);
+    _onEndCallbacks.forEach((fn) => {
+      try { fn(); } catch (e) { console.error(e); }
+    });
+  };
+
+  synth.resume();
+  synth.speak(utterance);
+}
+
+// ── Public API ─────────────────────────────────────────────────────────────────
+
 export const SpeechPlayerService = {
   /**
    * Returns true if the current browser supports SpeechSynthesis.
@@ -170,7 +248,9 @@ export const SpeechPlayerService = {
    * Returns true if the browser is currently speaking.
    */
   isSpeaking() {
-    return synth ? synth.speaking : false;
+    const isSynthSpeaking = synth ? synth.speaking : false;
+    const isAudioSpeaking = _currentAudio ? !_currentAudio.paused : false;
+    return isSynthSpeaking || isAudioSpeaking;
   },
 
   /**
@@ -178,91 +258,79 @@ export const SpeechPlayerService = {
    * @param {string} text
    */
   speak(text) {
-    if (!synth) return;
-
-    // Cancel any in-progress speech before starting new
-    synth.cancel();
+    // 1. Cancel any active speech
+    if (synth) synth.cancel();
+    if (_currentAudio) {
+      _currentAudio.pause();
+      _currentAudio = null;
+    }
 
     let cleanText = _stripMarkdown(text);
     if (!cleanText) return;
 
-    let voice = _pickVoice();
+    // 2. For Tamil and Sinhala, attempt Azure Speech synthesis through our backend
+    if (_currentLang === "tamil" || _currentLang === "sinhala") {
+      console.log(`[SpeechPlayer] Attempting Azure TTS for language: ${_currentLang}`);
 
-    // TTS Fallback and Transliteration Routing:
-    if (_currentLang === "tamil") {
-      if (!hasTamilScript(cleanText)) {
-        // 1. Text is Romanized Tanglish: use English/Indian English voice instead of native Tamil
-        voice = _pickVoice("english");
-        console.log("[SpeechPlayer] Speaking Tanglish using English voice:", voice?.name);
-      } else {
-        // 2. Text is Tamil script: check if we have a native Tamil voice
-        const isNativeTamilVoice = voice && (
-          voice.lang.startsWith("ta") || 
-          voice.name.toLowerCase().includes("tamil")
-        );
-        if (!isNativeTamilVoice) {
-          // Fallback: no native Tamil voice on this system, transliterate Tamil script to Tanglish
-          console.log("[SpeechPlayer] No native Tamil voice found. Transliterating Tamil script for fallback TTS...");
-          cleanText = transliterateTamil(cleanText);
-        }
-      }
-    } else if (_currentLang === "sinhala") {
-      if (!hasSinhalaScript(cleanText)) {
-        // 1. Text is Romanized Singlish: use English voice instead of native Sinhala
-        voice = _pickVoice("english");
-        console.log("[SpeechPlayer] Speaking Singlish using English voice:", voice?.name);
-      } else {
-        // 2. Text is Sinhala script: check if we have a native Sinhala voice
-        const isNativeSinhalaVoice = voice && (
-          voice.lang.startsWith("si") || 
-          voice.name.toLowerCase().includes("sinhala") || 
-          voice.name.toLowerCase().includes("sinhal")
-        );
-        if (!isNativeSinhalaVoice) {
-          // Fallback: no native Sinhala voice on this system, transliterate Sinhala script to Singlish
-          console.log("[SpeechPlayer] No native Sinhala voice found. Transliterating Sinhala script for fallback TTS...");
-          cleanText = transliterateSinhala(cleanText);
-        }
-      }
+      fetch(`${BACKEND_URL}/api/speech/synthesize`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: cleanText, language: _currentLang }),
+      })
+        .then(async (response) => {
+          if (!response.ok) {
+            throw new Error(`Azure TTS endpoint returned status ${response.status}`);
+          }
+          const blob = await response.blob();
+          const audioUrl = URL.createObjectURL(blob);
+
+          _currentAudio = new Audio(audioUrl);
+          _currentAudio.onended = () => {
+            URL.revokeObjectURL(audioUrl);
+            _currentAudio = null;
+            _onEndCallbacks.forEach((fn) => {
+              try { fn(); } catch (e) { console.error(e); }
+            });
+          };
+
+          _currentAudio.onerror = (err) => {
+            console.warn("[SpeechPlayer] HTML5 Audio error, falling back to local SpeechSynthesis:", err);
+            URL.revokeObjectURL(audioUrl);
+            _currentAudio = null;
+            _speakBrowserFallback(text);
+          };
+
+          _currentAudio.play().catch((playErr) => {
+            console.warn("[SpeechPlayer] Audio play blocked, falling back to local SpeechSynthesis:", playErr);
+            URL.revokeObjectURL(audioUrl);
+            _currentAudio = null;
+            _speakBrowserFallback(text);
+          });
+        })
+        .catch((err) => {
+          console.warn("[SpeechPlayer] Backend Azure TTS request failed, falling back to browser SpeechSynthesis:", err.message);
+          _speakBrowserFallback(text);
+        });
+    } else {
+      // 3. English uses native SpeechSynthesis directly
+      _speakBrowserFallback(text);
     }
-
-    const utterance = new SpeechSynthesisUtterance(cleanText);
-    utterance.rate = 1.0;   // natural speed
-    utterance.pitch = 1.0;
-    utterance.volume = 1.0;
-
-    if (voice) utterance.voice = voice;
-
-    utterance.onend = () => {
-      _onEndCallbacks.forEach((fn) => {
-        try { fn(); } catch (e) { console.error(e); }
-      });
-    };
-
-    utterance.onerror = (event) => {
-      // "interrupted" fires when we call cancel() — not a real error
-      if (event.error === "interrupted" || event.error === "canceled") return;
-      console.warn("[SpeechPlayer] utterance error:", event.error);
-      _onEndCallbacks.forEach((fn) => {
-        try { fn(); } catch (e) { console.error(e); }
-      });
-    };
-
-    // Chrome bug: speech gets stuck after ~15s — resuming first mitigates it
-    synth.resume();
-    synth.speak(utterance);
   },
 
   /**
    * Stop speaking immediately.
    */
   stop() {
+    if (_currentAudio) {
+      _currentAudio.pause();
+      _currentAudio = null;
+    }
     if (synth) {
       synth.cancel();
-      // Ensure all subscribers are notified that speech stopped
-      _onEndCallbacks.forEach((fn) => {
-        try { fn(); } catch (e) { console.error(e); }
-      });
     }
+    // Ensure all subscribers are notified that speech stopped
+    _onEndCallbacks.forEach((fn) => {
+      try { fn(); } catch (e) { console.error(e); }
+    });
   },
 };
