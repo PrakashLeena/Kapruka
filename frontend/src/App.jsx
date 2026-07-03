@@ -55,23 +55,6 @@ export default function App() {
         } catch (err) {
           console.warn("Failed to fetch Firebase ID token:", err);
         }
-
-        // User logged in: migrate guest sessions to user account
-        const storedGuestId = localStorage.getItem("kapruka_guest_id");
-        if (storedGuestId) {
-          try {
-            await fetch(`${BACKEND_URL}/chats/migrate`, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                ...(token ? { Authorization: `Bearer ${token}` } : {}),
-              },
-              body: JSON.stringify({ guestId: storedGuestId, userId: user.uid }),
-            });
-          } catch (err) {
-            console.error("Failed to migrate guest chats:", err);
-          }
-        }
       }
       setAuthToken(token);
       setFirebaseUser(user); // null if logged out, user object if logged in
@@ -81,15 +64,9 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // Generate or retrieve a persistent guest ID
-  const [guestId] = useState(() => {
-    let id = localStorage.getItem("kapruka_guest_id");
-    if (!id) {
-      id = `guest_${crypto.randomUUID()}`;
-      localStorage.setItem("kapruka_guest_id", id);
-    }
-    return id;
-  });
+  // Guest ID is in-memory only (no localStorage) so it's discarded on page refresh.
+  // Logged-in users use their Firebase UID for persistent history.
+  const [guestId] = useState(() => `guest_${crypto.randomUUID()}`);
 
   // Derive the userId from Firebase user uid, or fall back to guest ID
   const userId = firebaseUser?.uid ?? guestId;
@@ -127,15 +104,20 @@ export default function App() {
     }
   }
 
-  // Refetch chats when user changes
+  // Refetch chats only for authenticated users. Guests get ephemeral in-memory chat only.
   useEffect(() => {
-    if (firebaseUser !== undefined) {
-      // Clear previous user's data immediately to prevent private chat leaking
-      setChats([]);
-      handleNewChat();
-      fetchChats(userId, true);
+    if (firebaseUser === undefined) return; // still loading
+
+    // Clear previous user's data immediately to prevent private chat leaking
+    setChats([]);
+    handleNewChat();
+
+    if (firebaseUser) {
+      // Logged-in user — load persisted history from backend
+      fetchChats(firebaseUser.uid, true);
     }
-  }, [userId, firebaseUser]);
+    // Guest (firebaseUser === null): nothing to fetch, chat lives in React state only
+  }, [firebaseUser]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
