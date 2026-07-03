@@ -130,6 +130,9 @@ export default function App() {
   // Refetch chats when user changes
   useEffect(() => {
     if (firebaseUser !== undefined) {
+      // Clear previous user's data immediately to prevent private chat leaking
+      setChats([]);
+      handleNewChat();
       fetchChats(userId, true);
     }
   }, [userId, firebaseUser]);
