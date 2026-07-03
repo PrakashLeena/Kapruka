@@ -91,34 +91,72 @@ body {
 .voice-ring-2 { animation-delay: 0.5s;  }
 .voice-ring-3 { animation-delay: 1.0s;  }
 
-/* Speaking: five animated waveform bars */
-@keyframes voice-bar {
-  0%, 100% { height: 4px;  }
-  50%       { height: 16px; }
+/* Classic voice waves (Gemini/ChatGPT styled) */
+@keyframes voice-wave-1 {
+  0%, 100% { height: 6px; transform: scaleY(1); }
+  50% { height: 18px; transform: scaleY(1.2); }
+}
+@keyframes voice-wave-2 {
+  0%, 100% { height: 12px; transform: scaleY(1); }
+  50% { height: 4px; transform: scaleY(0.5); }
+}
+@keyframes voice-wave-3 {
+  0%, 100% { height: 8px; transform: scaleY(1); }
+  50% { height: 22px; transform: scaleY(1.3); }
+}
+@keyframes voice-wave-4 {
+  0%, 100% { height: 14px; transform: scaleY(1); }
+  50% { height: 6px; transform: scaleY(0.6); }
 }
 
-.voice-animation-speaking {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  height: 20px;
-  margin-right: 4px;
+.animate-voice-bar-1 {
+  animation: voice-wave-1 1s ease-in-out infinite;
 }
-
-.voice-bar {
-  width: 3px;
-  border-radius: 2px;
-  background-color: #402970;
-  animation: voice-bar 0.8s ease-in-out infinite;
+.animate-voice-bar-2 {
+  animation: voice-wave-2 0.8s ease-in-out infinite;
 }
-.voice-bar-1 { animation-delay: 0.0s; }
-.voice-bar-2 { animation-delay: 0.1s; }
-.voice-bar-3 { animation-delay: 0.2s; }
-.voice-bar-4 { animation-delay: 0.3s; }
-.voice-bar-5 { animation-delay: 0.4s; }
+.animate-voice-bar-3 {
+  animation: voice-wave-3 1.2s ease-in-out infinite;
+}
+.animate-voice-bar-4 {
+  animation: voice-wave-4 0.9s ease-in-out infinite;
+}
 
 /* Listening button: subtle glow on the button itself */
 .voice-btn-listening {
   box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.25);
 }
+
+/* Logo Loading Screen Custom Animations */
+@keyframes bounce-custom {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+@keyframes pulse-slow {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.05); opacity: 0.95; }
+}
+@keyframes fade-in-up {
+  0% { transform: translateY(12px); opacity: 0; }
+  100% { transform: translateY(0); opacity: 1; }
+}
+@keyframes progress {
+  0% { transform: translateX(-100%); }
+  50% { transform: translateX(0); }
+  100% { transform: translateX(100%); }
+}
+
+.animate-bounce-custom {
+  animation: bounce-custom 3s ease-in-out infinite;
+}
+.animate-pulse-slow {
+  animation: pulse-slow 4s ease-in-out infinite;
+}
+.animate-fade-in-up {
+  animation: fade-in-up 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+.animate-progress {
+  animation: progress 2.5s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
 

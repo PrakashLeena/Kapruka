@@ -465,18 +465,6 @@ export default function App() {
     sendMessage(input);
   }
 
-  // ── TTS (auto-speak replies) toggle — off by default, saved to localStorage ──
-  const [ttsEnabled, setTtsEnabled] = useState(() => {
-    try { return localStorage.getItem("kapruka_tts_enabled") === "true"; } catch { return false; }
-  });
-  function toggleTts() {
-    setTtsEnabled((prev) => {
-      const next = !prev;
-      try { localStorage.setItem("kapruka_tts_enabled", String(next)); } catch {}
-      return next;
-    });
-  }
-
   // ── Voice integration ──────────────────────────────────────────────────────
   // useVoice receives the existing sendMessage() and messages so voice reuses
   // the exact same chat pipeline. No business logic is duplicated.
@@ -489,15 +477,43 @@ export default function App() {
     isSupported: voiceSupported,
     selectedLang: voiceLang,
     setSelectedLang: setVoiceLang,
-  } = useVoice({ sendMessage, messages, ttsEnabled });
+  } = useVoice({ sendMessage, messages });
 
   // Show a loading spinner while Firebase resolves initial auth state
   if (firebaseUser === undefined) {
     return (
-      <div className="h-dvh flex items-center justify-center bg-cream-50">
-        <div className="flex flex-col items-center gap-3 text-charcoal/60">
-          <div className="w-10 h-10 border-4 border-teal border-t-transparent rounded-full animate-spin" />
-          <p className="text-sm">Loading Kapu...</p>
+      <div className="h-dvh flex flex-col items-center justify-center bg-cream-50">
+        <div className="flex flex-col items-center gap-6 max-w-sm px-6 text-center">
+          {/* Animated Logo Container */}
+          <div className="relative">
+            {/* Glowing background circles */}
+            <div className="absolute inset-0 bg-teal/10 rounded-full blur-xl scale-125 animate-pulse" />
+            <div className="absolute inset-0 bg-terracotta/5 rounded-full blur-2xl scale-150 animate-pulse delay-75" />
+            
+            {/* Logo image with custom animation */}
+            <div className="relative w-28 h-28 rounded-full overflow-hidden border-4 border-teal/20 shadow-xl bg-white flex items-center justify-center animate-bounce-custom">
+              <img
+                src={kaprukaLogo}
+                alt="Kapruka Logo"
+                className="w-full h-full object-cover animate-pulse-slow"
+              />
+            </div>
+          </div>
+          
+          {/* Animated Text */}
+          <div className="space-y-2 animate-fade-in-up">
+            <h1 className="text-xl font-bold font-display text-charcoal tracking-wide">
+              Kapruka AI
+            </h1>
+            <p className="text-xs text-charcoal/50 font-medium">
+              Connecting you with smart shopping in Sri Lanka
+            </p>
+          </div>
+          
+          {/* Subtle horizontal progress line */}
+          <div className="w-32 h-1 bg-cream-200 rounded-full overflow-hidden mt-2 relative">
+            <div className="absolute top-0 bottom-0 left-0 bg-teal rounded-full w-12 animate-progress" />
+          </div>
         </div>
       </div>
     );
@@ -673,22 +689,7 @@ export default function App() {
                 selectedLang={voiceLang}
                 onLangChange={setVoiceLang}
               />
-              {/* Speaker toggle — only show when voice is supported */}
-              {voiceSupported && (
-                <button
-                  type="button"
-                  onClick={toggleTts}
-                  title={ttsEnabled ? "Auto-speak replies: ON — click to turn off" : "Auto-speak replies: OFF — click to turn on"}
-                  aria-label={ttsEnabled ? "Disable auto-speak" : "Enable auto-speak"}
-                  className={`w-8 h-8 sm:w-10 sm:h-10 shrink-0 rounded-full flex items-center justify-center transition-all duration-200 ${
-                    ttsEnabled
-                      ? "bg-teal text-white shadow-sm"
-                      : "bg-cream-200 text-charcoal/40 hover:text-charcoal/70 hover:bg-cream-300"
-                  }`}
-                >
-                  {ttsEnabled ? <SpeakerOnIcon /> : <SpeakerOffIcon />}
-                </button>
-              )}
+
               {/* Image upload search button */}
               <ImageButton
                 onImageSelected={sendImageMessage}
@@ -727,23 +728,4 @@ export default function App() {
   );
 }
 
-// ── Speaker icon components for the TTS toggle ───────────────────────────────
-function SpeakerOnIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-      <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-      <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
-    </svg>
-  );
-}
 
-function SpeakerOffIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-      <line x1="23" y1="9" x2="17" y2="15" />
-      <line x1="17" y1="9" x2="23" y2="15" />
-    </svg>
-  );
-}
