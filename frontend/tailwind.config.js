@@ -23,8 +23,8 @@ export default {
         gold: "#FAE555", // User requested bright yellow: rgb(250, 229, 85)
       },
       fontFamily: {
-        display: ["Fraunces", "serif"],
-        sans: ["'Plus Jakarta Sans'", "system-ui", "sans-serif"],
+        display: ["'Poppins'", "'Roboto'", "'Segoe UI'", "Helvetica", "Arial", "sans-serif"],
+        sans: ["'Poppins'", "'Roboto'", "'Segoe UI'", "Helvetica", "Arial", "sans-serif"],
       },
     },
   },
