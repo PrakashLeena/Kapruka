@@ -44,21 +44,21 @@ const SINHALA_KEYWORDS = [
   "ayubowan", "sthuthi", "istuti", "bohoma", "sthutiy",
   // Pronouns
   "mama", "oyaa", "oya", "eyaa", "eya", "api", "apita", "oyalata",
-  "maata", "eyaata",
+  "maata", "eyaata", "mata", "oyala", "oyalage",
   // Questions
   "kohomada", "mokakda", "mokada", "kawda", "kavda", "keeyada",
   "kiyada", "kohedada", "kohe",
   // Common verbs / words
-  "innawa", "thiyanawa", "thiynawa", "weda", "karanna", "karala",
-  "yanawa", "enawa", "balanna", "balaganna", "puluwani", "bari",
-  "hondin", "hari", "naraka", "lassana", "honda",
+  "innawa", "thiyanawa", "thiynawa", "tiyenawa", "tiyanawa", "weda", "karanna", "karala",
+  "yanawa", "enawa", "balanna", "balaganna", "puluwani", "puluwan", "puluwanda", "bari",
+  "hondin", "hari", "naraka", "lassana", "honda", "ewanna", "yawanna", "yewanna",
   // Adjectives / misc
-  "hodai", "hoda", "wishesh", "danno", "danne",
-  "baluwa", "ganna", "denna", "genawa",
+  "hodai", "hoda", "wishesh", "danno", "danne", "one", "oni", "onay", "onee",
+  "baluwa", "ganna", "denna", "genawa", "ganan", "gana", "ganada", "wisthara", "wistara", "salli",
   // Family
   "amma", "thaththa", "ayya", "akka", "malli", "nangi",
   // Particle patterns unique to Singlish
-  "neda", "ne", "da", "wa", "eka", "ekak", "ekath",
+  "neda", "ne", "da", "wa", "eka", "ekak", "ekath", "nadda", "nedda",
   "wela", "kala", "gena", "saha",
 ];
 
@@ -105,8 +105,8 @@ export function detectLanguage(text) {
   const tamilScore = _score(normalized, TAMIL_KEYWORDS);
   const sinhalaScore = _score(normalized, SINHALA_KEYWORDS);
 
-  // Require a minimum confidence threshold to avoid false positives
-  const MIN_SCORE = 3;
+  // Require a minimum confidence threshold of 2 to avoid false positives
+  const MIN_SCORE = 2;
 
   if (tamilScore === 0 && sinhalaScore === 0) return "english";
   if (tamilScore >= MIN_SCORE && tamilScore > sinhalaScore) return "tamil";

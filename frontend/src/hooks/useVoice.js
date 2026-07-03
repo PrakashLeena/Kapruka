@@ -126,13 +126,19 @@ export function useVoice({ sendMessage, messages }) {
     setVoiceState("listening");
 
     // Auto-detect language from conversation history.
-    // If no history yet (first message), default to 'ta-IN' so Tamil speakers
-    // are recognised correctly from the very first utterance.
-    // English is also well-understood by ta-IN — the recogniser handles both.
+    // If no history yet (first message), default based on browser language settings
     const historyLang = detectConversationLanguage(messagesRef.current);
-    const lang = historyLang !== "english" ? historyLang : (
-      messagesRef.current.length === 0 ? "tamil" : "english"
-    );
+    let lang = historyLang;
+    if (historyLang === "english" && messagesRef.current.length === 0) {
+      const browserLang = (navigator.language || navigator.userLanguage || "").toLowerCase();
+      if (browserLang.startsWith("si")) {
+        lang = "sinhala";
+      } else if (browserLang.startsWith("ta")) {
+        lang = "tamil";
+      } else {
+        lang = "english";
+      }
+    }
 
     VoiceRecognitionService.setLanguage(lang);
     SpeechPlayerService.setLanguage(lang);

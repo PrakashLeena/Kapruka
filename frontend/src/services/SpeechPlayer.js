@@ -128,7 +128,11 @@ function _pickVoice(lang = _currentLang) {
 // ── Public API ─────────────────────────────────────────────────────────────────
 
 let _currentAudio = null;
-const BACKEND_URL = (import.meta.env.VITE_BACKEND_URL || "http://localhost:3000").replace(/\/$/, "");
+const BACKEND_URL = (
+  import.meta.env.VITE_BACKEND_URL !== undefined && import.meta.env.VITE_BACKEND_URL !== ""
+    ? import.meta.env.VITE_BACKEND_URL
+    : (import.meta.env.DEV ? "http://localhost:3000" : "")
+).replace(/\/$/, "");
 
 /**
  * Standard browser-based fallback speech synthesis when Azure is not configured or offline.
