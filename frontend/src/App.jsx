@@ -9,7 +9,7 @@ import { useVoice } from "./hooks/useVoice.js";
 import { onAuthChange } from "./firebase.js";
 import { detectConversationLanguage } from "./services/LanguageDetector.js";
 import kaprukaLogo from "./kapruka_com_logo.jpg";
-import sendOnlineLogo from "./send-online-logo.png";
+import sendOnlineLogo from "./send-online-logo.jpg";
 
 const BACKEND_URL = (
   import.meta.env.VITE_BACKEND_URL !== undefined
