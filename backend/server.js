@@ -11,6 +11,8 @@ import cors from "cors";
 import https from "https";
 import http from "http";
 import { MongoClient } from "mongodb";
+import { initializeApp, cert, applicationDefault, getApps } from "firebase-admin/app";
+import { getAuth as getFirebaseAdminAuth } from "firebase-admin/auth";
 import { buildSystemPrompt } from "./systemPrompt.js";
 import { callPrimaryStream, callPrimaryNonStream, analyzeImageForQuery, getProviderStatus } from "./aiRouter.js";
 import { romanToNativeScript } from "./services/transliterationService.js";
@@ -150,6 +152,62 @@ if (!MONGODB_URI) {
 // ─── MongoDB Setup ────────────────────────────────────────────────────────────
 let db = null;
 let mongoClient = null;
+
+let firebaseAdminAuth = null;
+function getFirebaseAdminAuthClient() {
+  if (firebaseAdminAuth) return firebaseAdminAuth;
+
+  try {
+    if (!getApps().length) {
+      const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+      if (serviceAccountJson) {
+        const serviceAccount = JSON.parse(serviceAccountJson);
+        initializeApp({ credential: cert(serviceAccount) });
+      } else if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+        initializeApp({ credential: applicationDefault() });
+      } else {
+        return null;
+      }
+    }
+
+    firebaseAdminAuth = getFirebaseAdminAuth();
+    return firebaseAdminAuth;
+  } catch (err) {
+    console.warn("Firebase Admin auth is not configured:", err.message);
+    firebaseAdminAuth = null;
+    return null;
+  }
+}
+
+async function getAuthenticatedUserId(req) {
+  const authHeader = req.headers.authorization || "";
+  if (!authHeader.startsWith("Bearer ")) return null;
+
+  const token = authHeader.slice(7).trim();
+  if (!token) return null;
+
+  const adminAuth = getFirebaseAdminAuthClient();
+  if (!adminAuth) {
+    const err = new Error("Firebase auth verification is not configured on the server.");
+    err.statusCode = 503;
+    throw err;
+  }
+
+  try {
+    const decoded = await adminAuth.verifyIdToken(token);
+    return decoded.uid;
+  } catch (err) {
+    const authError = new Error("Invalid or expired Firebase auth token.");
+    authError.statusCode = 401;
+    authError.cause = err;
+    throw authError;
+  }
+}
+
+async function resolveRequestUserId(req, fallbackUserId = null) {
+  const authenticatedUserId = await getAuthenticatedUserId(req);
+  return authenticatedUserId || fallbackUserId || null;
+}
 
 async function connectMongo() {
   if (db) return db;
@@ -486,6 +544,17 @@ function processToolResponse(toolName, responseData, products, orderRef) {
 
   const items = Array.isArray(parsed) ? parsed : parsed.results ?? parsed.products ?? [parsed];
 
+  function normalizeStockStatus(item) {
+    if (item.in_stock === true || item.inStock === true || item.available === true) return true;
+    if (item.in_stock === false || item.inStock === false || item.available === false) return false;
+    if (typeof item.stock === "number") return item.stock > 0;
+    if (typeof item.stock === "string") {
+      const parsedStock = Number(item.stock);
+      if (!Number.isNaN(parsedStock)) return parsedStock > 0;
+    }
+    return null;
+  }
+
   for (const item of items) {
     if (!item || typeof item !== "object") continue;
 
@@ -528,13 +597,13 @@ function processToolResponse(toolName, responseData, products, orderRef) {
     }
 
     products.push({
-      id: item.id ?? item.product_id ?? name,
+      id: item.id ?? item.product_id ?? item.sku ?? item.slug ?? `${toolName}:${name}`,
       name,
       price: priceVal,
       currency: currencyVal,
       image: item.image ?? item.image_url ?? item.images?.[0] ?? null,
       url: item.url ?? item.product_url ?? null,
-      inStock: item.in_stock ?? item.stock !== 0,
+      inStock: normalizeStockStatus(item),
       sourceTool: toolName,
     });
   }
@@ -601,7 +670,13 @@ app.get("/debug-mcp", async (req, res) => {
  */
 app.get("/chats", async (req, res) => {
   try {
-    const { userId } = req.query;
+    const { userId: queryUserId } = req.query;
+    let userId;
+    try {
+      userId = await resolveRequestUserId(req, queryUserId);
+    } catch (err) {
+      return res.status(err.statusCode || 401).json({ error: err.message });
+    }
     if (!userId) {
       return res.status(400).json({ error: "userId query parameter is required." });
     }
@@ -647,7 +722,13 @@ app.get("/chats", async (req, res) => {
 app.get("/chats/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const { userId } = req.query;
+    const { userId: queryUserId } = req.query;
+    let userId;
+    try {
+      userId = await resolveRequestUserId(req, queryUserId);
+    } catch (err) {
+      return res.status(err.statusCode || 401).json({ error: err.message });
+    }
     if (!userId) {
       return res.status(400).json({ error: "userId query parameter is required." });
     }
@@ -673,7 +754,13 @@ app.get("/chats/:id", async (req, res) => {
 app.delete("/chats/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const { userId } = req.query;
+    const { userId: queryUserId } = req.query;
+    let userId;
+    try {
+      userId = await resolveRequestUserId(req, queryUserId);
+    } catch (err) {
+      return res.status(err.statusCode || 401).json({ error: err.message });
+    }
     if (!userId) {
       return res.status(400).json({ error: "userId query parameter is required." });
     }
@@ -700,9 +787,18 @@ app.delete("/chats/:id", async (req, res) => {
  */
 app.post("/chats/migrate", async (req, res) => {
   try {
-    const { guestId, userId } = req.body;
-    if (!guestId || !userId) {
-      return res.status(400).json({ error: "guestId and userId are required." });
+    const { guestId } = req.body;
+    if (!guestId) {
+      return res.status(400).json({ error: "guestId is required." });
+    }
+    let userId;
+    try {
+      userId = await resolveRequestUserId(req, null);
+    } catch (err) {
+      return res.status(err.statusCode || 401).json({ error: err.message });
+    }
+    if (!userId) {
+      return res.status(401).json({ error: "A verified Firebase user is required to migrate chats." });
     }
     const col = getChatCollection();
     if (col) {
@@ -736,7 +832,13 @@ app.post("/chat", async (req, res) => {
     return res.status(500).json({ error: "No LLM provider configured on the server (set TGI_ENDPOINT_URL or OPENAI_API_KEY)." });
   }
 
-  const { sessionId, message, userId } = req.body ?? {};
+  const { sessionId, message, userId: bodyUserId } = req.body ?? {};
+  let userId;
+  try {
+    userId = await resolveRequestUserId(req, bodyUserId);
+  } catch (err) {
+    return res.status(err.statusCode || 401).json({ error: err.message });
+  }
 
   if (!sessionId || typeof sessionId !== "string") {
     return res.status(400).json({ error: "Missing sessionId" });
@@ -943,7 +1045,14 @@ app.post("/chat/stream", async (req, res) => {
 
   const emit = (obj) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
 
-  const { sessionId, message, userId } = req.body ?? {};
+  const { sessionId, message, userId: bodyUserId } = req.body ?? {};
+  let userId;
+  try {
+    userId = await resolveRequestUserId(req, bodyUserId);
+  } catch (err) {
+    emit({ type: "error", message: err.message });
+    return res.end();
+  }
 
   if (!sessionId || typeof sessionId !== "string") {
     emit({ type: "error", message: "Missing sessionId" });
@@ -1205,7 +1314,14 @@ app.post("/chat/image-search", async (req, res) => {
 
   const emit = (obj) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
 
-  const { imageBase64, mimeType, sessionId, userId } = req.body ?? {};
+  const { imageBase64, mimeType, sessionId, userId: bodyUserId } = req.body ?? {};
+  let userId;
+  try {
+    userId = await resolveRequestUserId(req, bodyUserId);
+  } catch (err) {
+    emit({ type: "error", message: err.message });
+    return res.end();
+  }
 
   if (!imageBase64 || typeof imageBase64 !== "string") {
     emit({ type: "error", message: "Missing imageBase64" });

@@ -18,6 +18,12 @@ export default function RightPane({ products, onAddToCart, selectedProduct, setS
   // If a single product is selected, show its full detail view
   if (selectedProduct) {
     const { name, price, currency, image, url, inStock, sourceTool } = selectedProduct;
+    const stockLabel = inStock === true ? "In Stock" : inStock === false ? "Out of stock" : "Availability unknown";
+    const stockClass = inStock === true
+      ? "bg-teal/10 text-teal"
+      : inStock === false
+        ? "bg-red-100 text-red-600"
+        : "bg-cream-200 text-charcoal/60";
     return (
       <div className="h-full flex flex-col bg-white">
         {/* Back header */}
@@ -57,8 +63,8 @@ export default function RightPane({ products, onAddToCart, selectedProduct, setS
               </div>
             )}
             <div className="flex flex-wrap gap-2 mt-1">
-              <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${inStock !== false ? "bg-teal/10 text-teal" : "bg-red-100 text-red-600"}`}>
-                {inStock !== false ? "● In Stock" : "● Out of stock"}
+              <span className={`text-xs px-2.5 py-1 rounded-full font-medium ${stockClass}`}>
+                {inStock === true ? "● In Stock" : inStock === false ? "● Out of stock" : "● Availability unknown"}
               </span>
               {sourceTool && (
                 <span className="text-xs px-2.5 py-1 rounded-full bg-cream-200 text-charcoal/60 font-medium">

@@ -1,5 +1,11 @@
 export default function ProductCard({ product, onAddToCart }) {
   const { name, price, currency, image, url, inStock } = product;
+  const stockLabel = inStock === true ? "In stock" : inStock === false ? "Out of stock" : "Availability unknown";
+  const stockClass = inStock === true
+    ? "bg-teal/10 text-teal"
+    : inStock === false
+      ? "bg-red-100 text-red-600"
+      : "bg-cream-200 text-charcoal/60";
 
   return (
     <div className="w-44 shrink-0 snap-start rounded-2xl bg-white border border-cream-200 overflow-hidden shadow-sm flex flex-col">
@@ -25,6 +31,9 @@ export default function ProductCard({ product, onAddToCart }) {
 
       <div className="p-3 flex flex-col gap-2 flex-1">
         <p className="text-sm font-medium leading-snug line-clamp-2">{name}</p>
+        <span className={`inline-flex w-fit text-[10px] px-2 py-0.5 rounded-full font-semibold ${stockClass}`}>
+          {stockLabel}
+        </span>
 
         <div className="mt-auto flex items-center gap-2">
           <button

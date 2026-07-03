@@ -29,6 +29,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [currentProducts, setCurrentProducts] = useState([]);
   const [selectedProduct, setSelectedProduct] = useState(null);
+  const [authToken, setAuthToken] = useState(null);
 
   // Firebase auth state: null = not logged in, object = logged in user
   const [firebaseUser, setFirebaseUser] = useState(undefined); // undefined = still loading
@@ -47,14 +48,24 @@ export default function App() {
   // Listen to Firebase auth state changes
   useEffect(() => {
     const unsubscribe = onAuthChange(async (user) => {
+      let token = null;
       if (user) {
+        try {
+          token = await user.getIdToken();
+        } catch (err) {
+          console.warn("Failed to fetch Firebase ID token:", err);
+        }
+
         // User logged in: migrate guest sessions to user account
         const storedGuestId = localStorage.getItem("kapruka_guest_id");
         if (storedGuestId) {
           try {
             await fetch(`${BACKEND_URL}/chats/migrate`, {
               method: "POST",
-              headers: { "Content-Type": "application/json" },
+              headers: {
+                "Content-Type": "application/json",
+                ...(token ? { Authorization: `Bearer ${token}` } : {}),
+              },
               body: JSON.stringify({ guestId: storedGuestId, userId: user.uid }),
             });
           } catch (err) {
@@ -62,6 +73,7 @@ export default function App() {
           }
         }
       }
+      setAuthToken(token);
       setFirebaseUser(user); // null if logged out, user object if logged in
       setCurrentProducts([]);
       setSelectedProduct(null);
@@ -82,6 +94,13 @@ export default function App() {
   // Derive the userId from Firebase user uid, or fall back to guest ID
   const userId = firebaseUser?.uid ?? guestId;
 
+  function buildHeaders(extraHeaders = {}) {
+    return {
+      ...extraHeaders,
+      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+    };
+  }
+
   // Fetch chat sessions filtered by current user's Firebase uid
   async function fetchChats(targetUserId = userId, selectLatest = false) {
     if (!targetUserId) {
@@ -89,7 +108,9 @@ export default function App() {
       return;
     }
     try {
-      const res = await fetch(`${BACKEND_URL}/chats?userId=${encodeURIComponent(targetUserId)}`);
+      const res = await fetch(`${BACKEND_URL}/chats?userId=${encodeURIComponent(targetUserId)}`, {
+        headers: buildHeaders(),
+      });
       if (res.ok) {
         const data = await res.json();
         setChats(data);
@@ -123,7 +144,9 @@ export default function App() {
     setActiveChatId(chatId);
     setLoading(true);
     try {
-      const res = await fetch(`${BACKEND_URL}/chats/${chatId}?userId=${encodeURIComponent(targetUserId)}`);
+      const res = await fetch(`${BACKEND_URL}/chats/${chatId}?userId=${encodeURIComponent(targetUserId)}`, {
+        headers: buildHeaders(),
+      });
       if (!res.ok) throw new Error("Failed to load chat history");
       const data = await res.json();
 
@@ -151,6 +174,7 @@ export default function App() {
     try {
       const res = await fetch(`${BACKEND_URL}/chats/${chatId}?userId=${encodeURIComponent(userId)}`, {
         method: "DELETE",
+        headers: buildHeaders(),
       });
       if (res.ok) {
         setChats((prev) => prev.filter((c) => c.id !== chatId));
@@ -203,7 +227,7 @@ export default function App() {
 
         const res = await fetch(`${BACKEND_URL}/chat/stream`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: buildHeaders({ "Content-Type": "application/json" }),
           body: JSON.stringify({
             sessionId: activeChatId,
             message: trimmed,
@@ -331,7 +355,7 @@ export default function App() {
 
         const res = await fetch(`${BACKEND_URL}/chat/image-search`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: buildHeaders({ "Content-Type": "application/json" }),
           body: JSON.stringify({
             imageBase64,
             mimeType: file.type,

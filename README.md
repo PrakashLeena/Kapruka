@@ -42,7 +42,21 @@ npm run dev
 
 Open the URL Vite prints (usually `http://localhost:5173`).
 
-## 3. Test the thing that actually matters
+## 3. Configure Firebase auth for logged-in sessions
+
+Guest browsing still works without extra setup, but if you want saved chats for
+logged-in users you need Firebase Admin credentials on the backend so the server
+can verify the ID token sent by the frontend.
+
+Add one of these to `backend/.env`:
+
+- `FIREBASE_SERVICE_ACCOUNT_JSON` - the full service account JSON as a single line string
+- `GOOGLE_APPLICATION_CREDENTIALS` - path to a service account JSON file on disk
+
+Keep the existing Firebase client config in `frontend/src/firebase.js` pointed at
+the same Firebase project.
+
+## 4. Test the thing that actually matters
 
 Before you touch the UI again, throw real situations at it and read how it
 reasons, not just whether it returns products:
@@ -62,7 +76,7 @@ reasons, not just whether it returns products:
 If any of these feel weak, the fix is almost always in
 `backend/systemPrompt.js`, not in the frontend.
 
-## 4. A note on product data field names
+## 5. A note on product data field names
 
 `server.js` has an `extractToolResults()` function that tries several
 common field-name variants (`name`/`title`, `image`/`image_url`/`images[0]`,
@@ -72,7 +86,7 @@ first time you run a real search, add a quick `console.log(rawText)` inside
 that function, look at the actual shape, and tighten the field names to
 match exactly - it's a five-minute edit once you can see real data.
 
-## 5. Deploy
+## 6. Deploy
 
 **Frontend → Vercel** (free, fastest path to a public URL):
 1. Push this repo to GitHub
@@ -92,7 +106,7 @@ Free-tier backends on Render can go to sleep after inactivity. Set up a
 free [UptimeRobot](https://uptimerobot.com) check pinging `/health` every
 10 minutes so the service is awake when judges open the link.
 
-## 6. Cost notes
+## 7. Cost notes
 
 Sonnet 4.6 is currently $3 per million input tokens and $15 per million
 output tokens - a full shopping conversation (browsing through to checkout)
@@ -103,7 +117,7 @@ traffic at scale, route simple lookups to Haiku 4.5 ($1/$5 per million
 tokens) and keep Sonnet for the situational-reasoning turns - but for a
 hackathon demo, just leave it on Sonnet throughout.
 
-## 7. What to tune if you have extra time
+## 8. What to tune if you have extra time
 
 In priority order:
 1. `backend/systemPrompt.js` - the actual differentiator, see step 3 above
