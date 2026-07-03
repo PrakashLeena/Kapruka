@@ -17,6 +17,7 @@
     { "source": "/chats/migrate", "destination": "/api/index.js" },
     { "source": "/chats/:id",   "destination": "/api/index.js" },
     { "source": "/api/speech/synthesize", "destination": "/api/index.js" },
+    { "source": "/api/speech/transcribe", "destination": "/api/index.js" },
     { "source": "/(.*)",        "destination": "/index.html"   }
   ],
   "crons": [

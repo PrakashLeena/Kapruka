@@ -17,6 +17,7 @@ import { buildSystemPrompt } from "./systemPrompt.js";
 import { callPrimaryStream, callPrimaryNonStream, analyzeImageForQuery, getProviderStatus } from "./aiRouter.js";
 import { romanToNativeScript } from "./services/transliterationService.js";
 import { synthesizeSpeech, isAzureTtsConfigured } from "./services/ttsService.js";
+import { transcribeSpeech, isAzureSttConfigured } from "./services/sttService.js";
 
 
 const PORT = process.env.PORT || 3000;
@@ -1553,6 +1554,33 @@ app.post("/api/speech/synthesize", async (req, res) => {
   } catch (err) {
     console.error("[/api/speech/synthesize] Error:", err.message);
     return res.status(500).json({ error: "Failed to synthesize speech.", details: err.message });
+  }
+});
+
+// ─── Speech Transcription Endpoint (Azure Cognitive Services STT) ──────────────
+// Receives raw audio from the browser's MediaRecorder and returns a transcript.
+// Uses Azure STT which NATIVELY supports si-LK (Sinhala) — unlike Chrome's
+// Web Speech API which does not support Sinhala at all.
+app.post("/api/speech/transcribe", express.raw({ type: "*/*", limit: "10mb" }), async (req, res) => {
+  const language    = req.query.language    || "si-LK";  // BCP-47 locale
+  const contentType = req.headers["content-type"] || "audio/webm;codecs=opus";
+
+  if (!isAzureSttConfigured()) {
+    return res.status(503).json({ error: "Azure Speech Service is not configured. Set AZURE_SPEECH_KEY." });
+  }
+
+  const audioBuffer = req.body;
+  if (!audioBuffer || !audioBuffer.length) {
+    return res.status(400).json({ error: "No audio data received." });
+  }
+
+  try {
+    console.log(`[/api/speech/transcribe] lang=${language} size=${audioBuffer.length} type=${contentType}`);
+    const transcript = await transcribeSpeech(audioBuffer, language, contentType);
+    return res.json({ transcript });
+  } catch (err) {
+    console.error("[/api/speech/transcribe] Error:", err.message);
+    return res.status(500).json({ error: "Speech transcription failed.", details: err.message });
   }
 });
 

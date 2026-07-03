@@ -93,9 +93,11 @@ export function useVoice({ sendMessage, messages }) {
       sendMessage(`🎤 ${hint}${transcript}`);
     });
 
-    // Speech recognition ended (no result or after result) → guard idle fallback
+    // Speech recognition ended — recording is done, transcription is in progress.
+    // Transition listening → thinking to show spinner while Azure STT processes audio.
+    // (If onResult already fired first, prev won't be "listening" — no-op.)
     VoiceRecognitionService.onEnd(() => {
-      setVoiceState((prev) => (prev === "listening" ? "idle" : prev));
+      setVoiceState((prev) => (prev === "listening" ? "thinking" : prev));
     });
 
     // Speech recognition error
