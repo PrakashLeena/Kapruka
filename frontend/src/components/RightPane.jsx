@@ -115,7 +115,7 @@ export default function RightPane({ products, onAddToCart, selectedProduct, setS
                     <div
                       key={p.id ?? idx}
                       onClick={() => setSelectedProduct(p)}
-                      className="cursor-pointer rounded-xl border border-cream-200/80 p-2 hover:border-teal hover:shadow-sm transition-all flex flex-col bg-cream-50/20"
+                      className="cursor-pointer rounded-xl border border-cream-200/80 p-2 hover-glow-card flex flex-col bg-cream-50/20"
                     >
                       <div className="h-16 bg-white rounded-lg flex items-center justify-center overflow-hidden mb-1.5 relative border border-cream-100">
                         {p.image ? (
@@ -162,7 +162,7 @@ export default function RightPane({ products, onAddToCart, selectedProduct, setS
               <div
                 key={id ?? i}
                 onClick={() => setSelectedProduct(product)}
-                className="group cursor-pointer rounded-2xl bg-white border border-cream-200 overflow-hidden shadow-sm hover:shadow transition-all flex flex-col"
+                className="group cursor-pointer rounded-2xl bg-white border border-cream-200 overflow-hidden shadow-sm hover-glow-card flex flex-col"
               >
                 <div className="relative h-28 bg-cream-50 flex items-center justify-center overflow-hidden">
                   {image ? (

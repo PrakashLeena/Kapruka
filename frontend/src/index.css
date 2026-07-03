@@ -159,4 +159,73 @@ body {
   animation: progress 2.5s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
 
+/* Chat Message Entry Animation */
+@keyframes message-in {
+  0% {
+    transform: translateY(8px);
+    opacity: 0;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+.animate-message-in {
+  animation: message-in 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Premium Ambient Glowing Mesh Background */
+.mesh-bg-glow {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  top: 0;
+  left: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0.45;
+}
+.mesh-glow-orb-1 {
+  position: absolute;
+  top: -10%;
+  right: -5%;
+  width: 400px;
+  height: 400px;
+  border-radius: 999px;
+  background: radial-gradient(circle, rgba(14, 116, 144, 0.15) 0%, transparent 70%);
+  filter: blur(40px);
+}
+.mesh-glow-orb-2 {
+  position: absolute;
+  bottom: -5%;
+  left: -5%;
+  width: 500px;
+  height: 500px;
+  border-radius: 999px;
+  background: radial-gradient(circle, rgba(220, 104, 84, 0.1) 0%, transparent 70%);
+  filter: blur(50px);
+}
+
+/* Interactive Card & Button micro-behaviors */
+.hover-glow-card {
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.hover-glow-card:hover {
+  transform: translateY(-4px) scale(1.02);
+  box-shadow: 0 12px 24px -10px rgba(14, 116, 144, 0.15);
+  border-color: rgba(14, 116, 144, 0.3);
+}
+
+.hover-micro-pop {
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.hover-micro-pop:hover {
+  transform: scale(1.06);
+}
+.hover-micro-pop:active {
+  transform: scale(0.96);
+}
+
+
 

@@ -36,7 +36,7 @@ export default function ChatMessage({ message, onAddToCart, speakLang = "english
 
   if (isUser) {
     return (
-      <div className="flex justify-end">
+      <div className="flex justify-end animate-message-in">
         <div className="max-w-[80%] bg-terracotta text-white px-4 py-2.5 rounded-2xl rounded-br-sm text-sm leading-relaxed break-words whitespace-pre-wrap">
           {message.text}
         </div>
@@ -46,7 +46,7 @@ export default function ChatMessage({ message, onAddToCart, speakLang = "english
 
 
   return (
-    <div className="flex items-start gap-2 min-w-0">
+    <div className="flex items-start gap-2 min-w-0 animate-message-in">
       <div className="shrink-0 w-7 h-7 rounded-full bg-teal text-white flex items-center justify-center text-xs font-semibold font-display mt-0.5">
         K
       </div>

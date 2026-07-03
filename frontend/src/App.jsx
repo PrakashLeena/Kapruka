@@ -502,9 +502,15 @@ export default function App() {
   }
 
   return (
-    <div className="h-dvh flex flex-col bg-cream-50 overflow-hidden">
+    <div className="h-dvh flex flex-col bg-cream-50 overflow-hidden relative">
+      {/* Ambient decorative glowing blobs */}
+      <div className="mesh-bg-glow">
+        <div className="mesh-glow-orb-1" />
+        <div className="mesh-glow-orb-2" />
+      </div>
+
       {/* Header */}
-      <header className="shrink-0 bg-teal text-white px-5 py-4 flex items-center justify-between shadow-sm">
+      <header className="shrink-0 bg-teal text-white px-5 py-4 flex items-center justify-between shadow-sm z-10">
         <div className="flex items-center gap-3">
           {/* Hamburger Menu Icon for Mobile */}
           <button
