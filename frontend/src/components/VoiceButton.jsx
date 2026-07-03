@@ -105,11 +105,11 @@ export default function VoiceButton({
             type="button"
             onClick={() => setShowLangPicker((v) => !v)}
             title={`Speaking in: ${currentLangOption.title}. Click to change.`}
-            className="h-7 px-2 rounded-full bg-cream-200 hover:bg-cream-300 text-charcoal/70 hover:text-charcoal text-[11px] font-semibold transition-all duration-150 flex items-center gap-0.5 border border-charcoal/10"
+            className="h-6 px-1.5 sm:h-7 sm:px-2 rounded-full bg-cream-200 hover:bg-cream-300 text-charcoal/70 hover:text-charcoal text-[10px] sm:text-[11px] font-semibold transition-all duration-150 flex items-center gap-0.5 border border-charcoal/10"
             aria-label="Change voice language"
           >
             {currentLangOption.label}
-            <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="opacity-50">
+            <svg width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="opacity-50 hidden sm:block">
               <path d="M6 9l6 6 6-6"/>
             </svg>
           </button>
@@ -145,7 +145,7 @@ export default function VoiceButton({
         title={LABELS[voiceState]}
         aria-label={LABELS[voiceState]}
         aria-pressed={voiceState === "listening"}
-        className={`relative w-10 h-10 shrink-0 rounded-full flex items-center justify-center transition-all duration-200 ${btnClass}`}
+        className={`relative w-8 h-8 sm:w-10 sm:h-10 shrink-0 rounded-full flex items-center justify-center transition-all duration-200 ${btnClass}`}
       >
         {isThinking ? (
           <svg

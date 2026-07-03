@@ -103,7 +103,7 @@ export default function ImageButton({ onImageSelected, disabled }) {
         disabled={disabled || isLoading}
         aria-label="Search by image"
         title="Search by image"
-        className={`w-10 h-10 shrink-0 rounded-full flex items-center justify-center transition-all duration-200
+        className={`w-8 h-8 sm:w-10 sm:h-10 shrink-0 rounded-full flex items-center justify-center transition-all duration-200
           ${
             isLoading
               ? "bg-teal/20 text-teal cursor-wait"

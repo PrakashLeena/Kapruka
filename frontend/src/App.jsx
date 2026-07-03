@@ -652,14 +652,14 @@ export default function App() {
           </main>
 
           {/* Input bar */}
-          <form onSubmit={handleSubmit} className="shrink-0 border-t border-cream-200 bg-cream-50 p-2.5 sm:p-3">
-            <div className="max-w-2xl mx-auto flex items-center gap-2">
+          <form onSubmit={handleSubmit} className="shrink-0 border-t border-cream-200 bg-cream-50 p-2 sm:p-3">
+            <div className="max-w-2xl mx-auto flex items-center gap-1 sm:gap-2">
               <input
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder="Type in Sinhala, Tamil, English, or mix it up..."
+                placeholder="Type or speak..."
                 disabled={loading}
-                className="flex-1 bg-white border border-cream-200 rounded-full px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal/40"
+                className="flex-1 min-w-0 bg-white border border-cream-200 rounded-full px-3 py-2 sm:px-4 sm:py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal/40"
               />
               {/* Voice button */}
               <VoiceButton
@@ -680,7 +680,7 @@ export default function App() {
                   onClick={toggleTts}
                   title={ttsEnabled ? "Auto-speak replies: ON — click to turn off" : "Auto-speak replies: OFF — click to turn on"}
                   aria-label={ttsEnabled ? "Disable auto-speak" : "Enable auto-speak"}
-                  className={`w-10 h-10 shrink-0 rounded-full flex items-center justify-center transition-all duration-200 ${
+                  className={`w-8 h-8 sm:w-10 sm:h-10 shrink-0 rounded-full flex items-center justify-center transition-all duration-200 ${
                     ttsEnabled
                       ? "bg-teal text-white shadow-sm"
                       : "bg-cream-200 text-charcoal/40 hover:text-charcoal/70 hover:bg-cream-300"
@@ -697,7 +697,7 @@ export default function App() {
               <button
                 type="submit"
                 disabled={loading || !input.trim()}
-                className="w-10 h-10 shrink-0 rounded-full bg-terracotta hover:bg-terracotta-dark disabled:bg-cream-200 text-white flex items-center justify-center transition-colors"
+                className="w-8 h-8 sm:w-10 sm:h-10 shrink-0 rounded-full bg-terracotta hover:bg-terracotta-dark disabled:bg-cream-200 text-white flex items-center justify-center transition-colors"
                 aria-label="Send message"
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
