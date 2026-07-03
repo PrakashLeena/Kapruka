@@ -474,11 +474,11 @@ export default function App() {
             <div className="absolute inset-0 bg-terracotta/5 rounded-full blur-2xl scale-150 animate-pulse delay-75" />
             
             {/* Logo image with custom animation */}
-            <div className="relative w-28 h-28 rounded-full overflow-hidden border-4 border-teal/20 shadow-xl bg-white flex items-center justify-center animate-bounce-custom">
+            <div className="relative w-56 flex items-center justify-center animate-bounce-custom">
               <img
                 src={sendOnlineLogo}
                 alt="Kapruka Logo"
-                className="w-full h-full object-cover animate-pulse-slow"
+                className="w-full h-auto object-contain animate-pulse-slow"
               />
             </div>
           </div>
