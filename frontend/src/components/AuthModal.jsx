@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { signInWithGoogle, signInWithEmail, signUpWithEmail } from "../firebase.js";
-import kaprukaLogo from "../send-online-logo.png";
+import kaprukaLogo from "../kapruka_com_logo.jpg";
 
 export default function AuthModal({ isOpen, onClose }) {
   const [mode, setMode] = useState("login"); // "login" | "signup"

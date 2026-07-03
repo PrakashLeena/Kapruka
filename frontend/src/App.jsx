@@ -8,7 +8,8 @@ import ImageButton from "./components/ImageButton.jsx";
 import { useVoice } from "./hooks/useVoice.js";
 import { onAuthChange } from "./firebase.js";
 import { detectConversationLanguage } from "./services/LanguageDetector.js";
-import kaprukaLogo from "./send-online-logo.png";
+import kaprukaLogo from "./kapruka_com_logo.jpg";
+import sendOnlineLogo from "./send-online-logo.png";
 
 const BACKEND_URL = (
   import.meta.env.VITE_BACKEND_URL !== undefined
@@ -475,7 +476,7 @@ export default function App() {
             {/* Logo image with custom animation */}
             <div className="relative w-28 h-28 rounded-full overflow-hidden border-4 border-teal/20 shadow-xl bg-white flex items-center justify-center animate-bounce-custom">
               <img
-                src={kaprukaLogo}
+                src={sendOnlineLogo}
                 alt="Kapruka Logo"
                 className="w-full h-full object-cover animate-pulse-slow"
               />
