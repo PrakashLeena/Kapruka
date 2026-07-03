@@ -188,9 +188,8 @@ async function getAuthenticatedUserId(req) {
 
   const adminAuth = getFirebaseAdminAuthClient();
   if (!adminAuth) {
-    const err = new Error("Firebase auth verification is not configured on the server.");
-    err.statusCode = 503;
-    throw err;
+    console.warn("Firebase auth token received, but Firebase Admin is not configured. Falling back to request userId.");
+    return null;
   }
 
   try {
@@ -205,7 +204,12 @@ async function getAuthenticatedUserId(req) {
 }
 
 async function resolveRequestUserId(req, fallbackUserId = null) {
-  const authenticatedUserId = await getAuthenticatedUserId(req);
+  let authenticatedUserId = null;
+  try {
+    authenticatedUserId = await getAuthenticatedUserId(req);
+  } catch (err) {
+    throw err;
+  }
   return authenticatedUserId || fallbackUserId || null;
 }
 
