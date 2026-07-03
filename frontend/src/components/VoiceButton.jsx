@@ -1,9 +1,9 @@
 /**
  * VoiceButton.jsx
  *
- * Microphone button with four visual states matching the voice lifecycle:
+ * Microphone button with language selector and four visual states:
  *
- *   idle      → grey mic icon — click to start listening
+ *   idle      → grey mic icon + language pill — click mic to start listening
  *   listening → pulsing red mic icon + VoiceAnimation rings — click to cancel
  *   thinking  → teal spinning indicator — no click (disabled while backend responds)
  *   speaking  → teal waveform VoiceAnimation — click to stop TTS
@@ -16,8 +16,11 @@
  *   error         — string|null
  *   onClearError  — () => void
  *   isSupported   — boolean    false = show unsupported message instead of button
+ *   selectedLang  — 'sinhala'|'tamil'|'english'  current mic language
+ *   onLangChange  — (lang: string) => void  called when user picks a language
  */
 
+import { useState } from "react";
 import VoiceAnimation from "./VoiceAnimation.jsx";
 
 const LABELS = {
@@ -27,6 +30,12 @@ const LABELS = {
   speaking: "Stop speaking",
 };
 
+const LANG_OPTIONS = [
+  { key: "sinhala", label: "සිං", title: "සිංහල (Sinhala)" },
+  { key: "english", label: "EN",  title: "English" },
+  { key: "tamil",   label: "தமி",  title: "தமிழ் (Tamil)" },
+];
+
 export default function VoiceButton({
   voiceState,
   onStart,
@@ -35,7 +44,11 @@ export default function VoiceButton({
   error,
   onClearError,
   isSupported,
+  selectedLang = "sinhala",
+  onLangChange,
 }) {
+  const [showLangPicker, setShowLangPicker] = useState(false);
+
   // ── Browser not supported ─────────────────────────────────────────────────────
   if (!isSupported) {
     return (
@@ -56,6 +69,7 @@ export default function VoiceButton({
   // ── Determine click handler ───────────────────────────────────────────────────
   function handleClick() {
     if (error) onClearError();
+    setShowLangPicker(false);
     if (voiceState === "idle") {
       onStart();
     } else if (voiceState === "listening" || voiceState === "speaking") {
@@ -75,11 +89,53 @@ export default function VoiceButton({
     speaking: "bg-teal hover:bg-teal-light text-white",
   }[voiceState];
 
+  const currentLangOption = LANG_OPTIONS.find((o) => o.key === selectedLang) || LANG_OPTIONS[0];
+
   return (
-    <div className="relative flex items-center">
+    <div className="relative flex items-center gap-1">
       {/* Listening / Speaking animation shown outside the button */}
       {(voiceState === "listening" || voiceState === "speaking") && (
         <VoiceAnimation state={voiceState} />
+      )}
+
+      {/* Language selector pill — only visible when idle */}
+      {voiceState === "idle" && onLangChange && (
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setShowLangPicker((v) => !v)}
+            title={`Speaking in: ${currentLangOption.title}. Click to change.`}
+            className="h-7 px-2 rounded-full bg-cream-200 hover:bg-cream-300 text-charcoal/70 hover:text-charcoal text-[11px] font-semibold transition-all duration-150 flex items-center gap-0.5 border border-charcoal/10"
+            aria-label="Change voice language"
+          >
+            {currentLangOption.label}
+            <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" className="opacity-50">
+              <path d="M6 9l6 6 6-6"/>
+            </svg>
+          </button>
+
+          {/* Dropdown */}
+          {showLangPicker && (
+            <div className="absolute bottom-9 left-1/2 -translate-x-1/2 bg-white border border-cream-200 rounded-xl shadow-lg z-50 overflow-hidden min-w-[150px]">
+              {LANG_OPTIONS.map((opt) => (
+                <button
+                  key={opt.key}
+                  type="button"
+                  onClick={() => {
+                    onLangChange(opt.key);
+                    setShowLangPicker(false);
+                  }}
+                  className={`w-full text-left px-3 py-2.5 text-sm hover:bg-cream-100 transition-colors flex items-center gap-2 ${
+                    opt.key === selectedLang ? "font-semibold text-teal bg-cream-50" : "text-charcoal"
+                  }`}
+                >
+                  <span className="text-base leading-none">{opt.label}</span>
+                  <span className="text-xs opacity-70">{opt.title}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       )}
 
       <button
@@ -92,7 +148,6 @@ export default function VoiceButton({
         className={`relative w-10 h-10 shrink-0 rounded-full flex items-center justify-center transition-all duration-200 ${btnClass}`}
       >
         {isThinking ? (
-          /* Spinner while waiting for backend response */
           <svg
             className="animate-spin w-4 h-4"
             viewBox="0 0 24 24"
@@ -131,7 +186,6 @@ export default function VoiceButton({
 // ── Inline SVG mic icon ───────────────────────────────────────────────────────
 function MicIcon({ muted }) {
   if (muted) {
-    // Mic with a diagonal slash (unsupported state)
     return (
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <line x1="1" y1="1" x2="23" y2="23" />

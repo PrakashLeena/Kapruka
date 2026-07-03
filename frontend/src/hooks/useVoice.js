@@ -17,6 +17,8 @@
  *   stopAll()         — cancel mic + TTS, return to idle
  *   error             — string | null (user-facing error message)
  *   clearError()      — dismiss the error
+ *   selectedLang      — 'sinhala' | 'tamil' | 'english'
+ *   setSelectedLang   — update the mic language
  */
 
 import { useState, useEffect, useRef, useCallback } from "react";
@@ -28,10 +30,27 @@ import { detectLanguage, detectConversationLanguage } from "../services/Language
  * @typedef {'idle'|'listening'|'thinking'|'speaking'} VoiceState
  */
 
+// Language prefix tags embedded in the voice message so the LLM knows
+// which language to respond in, regardless of recognition locale.
+const LANG_HINT = {
+  sinhala: "[සිංහල] ",  // Tells LLM: user is speaking Sinhala/Singlish → respond in Sinhala
+  tamil:   "[தமிழ்] ",  // Tells LLM: user is speaking Tamil → respond in Tamil
+  english: "",            // No prefix needed for English
+};
+
 export function useVoice({ sendMessage, messages }) {
   /** @type {[VoiceState, Function]} */
   const [voiceState, setVoiceState] = useState("idle");
   const [error, setError] = useState(null);
+
+  // Explicit language chosen by the user via the language picker
+  const [selectedLang, setSelectedLang] = useState(() => {
+    // Default based on browser locale; most Sri Lankan users will be on Sinhala
+    const bl = (navigator.language || "").toLowerCase();
+    if (bl.startsWith("si")) return "sinhala";
+    if (bl.startsWith("ta")) return "tamil";
+    return "sinhala"; // default to sinhala for Kapruka's primary market
+  });
 
   // Keep a ref to messages to avoid stale closure issues in the onResult listener
   const messagesRef = useRef(messages);
@@ -39,8 +58,16 @@ export function useVoice({ sendMessage, messages }) {
     messagesRef.current = messages;
   }, [messages]);
 
+  // Keep a ref to selectedLang so the onResult callback always reads current value
+  const selectedLangRef = useRef(selectedLang);
+  useEffect(() => {
+    selectedLangRef.current = selectedLang;
+    // Keep recognition service in sync whenever user changes language
+    VoiceRecognitionService.setLanguage(selectedLang);
+    SpeechPlayerService.setLanguage(selectedLang);
+  }, [selectedLang]);
+
   // Track how many messages existed when we sent a voice message.
-  // We use this to detect when a NEW assistant message has arrived.
   const pendingResponseRef = useRef(false);
   const messagesLengthAtSendRef = useRef(0);
 
@@ -53,20 +80,21 @@ export function useVoice({ sendMessage, messages }) {
       pendingResponseRef.current = true;
       messagesLengthAtSendRef.current = messagesRef.current.length;
 
-      // Detect language from what the user just said and sync both services
-      const lang = detectLanguage(transcript);
-      SpeechPlayerService.setLanguage(lang);
-      VoiceRecognitionService.setLanguage(lang); // keep recognition in sync for next turn
-      console.log("[useVoice] Detected language:", lang, "for transcript:", transcript);
+      const lang = selectedLangRef.current;
 
-      // Call the EXACT same sendMessage used by text input
-      // Prepend 🎤 so it's visually distinguishable in the chat history
-      sendMessage(`🎤 ${transcript}`);
+      // Sync TTS language with what was selected
+      SpeechPlayerService.setLanguage(lang);
+
+      console.log("[useVoice] Voice message in language:", lang, "transcript:", transcript);
+
+      // Prepend language hint so LLM knows which language to respond in,
+      // PLUS 🎤 so it's visually distinguishable in the chat history.
+      const hint = LANG_HINT[lang] || "";
+      sendMessage(`🎤 ${hint}${transcript}`);
     });
 
     // Speech recognition ended (no result or after result) → guard idle fallback
     VoiceRecognitionService.onEnd(() => {
-      // If we got a result, we're now in 'thinking'. Don't override that.
       setVoiceState((prev) => (prev === "listening" ? "idle" : prev));
     });
 
@@ -81,7 +109,6 @@ export function useVoice({ sendMessage, messages }) {
       setVoiceState("idle");
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  // Note: intentionally empty deps — we bind once, sendMessage is stable
 
   // ── Watch messages for new assistant response ────────────────────────────────
   useEffect(() => {
@@ -106,8 +133,8 @@ export function useVoice({ sendMessage, messages }) {
     const latestAssistant = newMessages.findLast?.((m) => m.role === "assistant");
 
     // findLast may not exist in older Chrome — safe fallback
-    const lastAssistantMsg = latestAssistant ||
-      [...newMessages].reverse().find((m) => m.role === "assistant");
+    const lastAssistantMsg =
+      latestAssistant || [...newMessages].reverse().find((m) => m.role === "assistant");
 
     if (lastAssistantMsg && !lastAssistantMsg.streaming) {
       // New completed assistant message arrived — speak it
@@ -125,21 +152,7 @@ export function useVoice({ sendMessage, messages }) {
     setError(null);
     setVoiceState("listening");
 
-    // Auto-detect language from conversation history.
-    // If no history yet (first message), default based on browser language settings
-    const historyLang = detectConversationLanguage(messagesRef.current);
-    let lang = historyLang;
-    if (historyLang === "english" && messagesRef.current.length === 0) {
-      const browserLang = (navigator.language || navigator.userLanguage || "").toLowerCase();
-      if (browserLang.startsWith("si")) {
-        lang = "sinhala";
-      } else if (browserLang.startsWith("ta")) {
-        lang = "tamil";
-      } else {
-        lang = "english";
-      }
-    }
-
+    const lang = selectedLangRef.current;
     VoiceRecognitionService.setLanguage(lang);
     SpeechPlayerService.setLanguage(lang);
     console.log("[useVoice] Starting recognition in language:", lang);
@@ -163,5 +176,7 @@ export function useVoice({ sendMessage, messages }) {
     error,
     clearError,
     isSupported: VoiceRecognitionService.isSupported(),
+    selectedLang,
+    setSelectedLang,
   };
 }

@@ -27,9 +27,13 @@ let _recognition = null;
 let _lang = "en-US";
 
 // Map of app language keys → BCP-47 locale codes for SpeechRecognition
+// NOTE: Chrome does NOT support si-LK (Sinhala). We use en-US for Sinhala
+// speakers because they naturally speak Romanized Singlish (e.g. "mata cake
+// ekak one") which Chrome transcribes perfectly in English mode. The LLM
+// then understands the Singlish and responds in Sinhala.
 const LANG_MAP = {
-  tamil:   "ta-IN",
-  sinhala: "si-LK",
+  tamil:   "ta-IN",   // Sri Lankan Tamil — supported by Chrome
+  sinhala: "en-US",   // Sinhala via Singlish — Chrome doesn't support si-LK
   english: "en-US",
 };
 

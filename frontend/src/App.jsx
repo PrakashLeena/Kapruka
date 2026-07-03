@@ -475,6 +475,8 @@ export default function App() {
     error: voiceError,
     clearError,
     isSupported: voiceSupported,
+    selectedLang: voiceLang,
+    setSelectedLang: setVoiceLang,
   } = useVoice({ sendMessage, messages });
 
   // Show a loading spinner while Firebase resolves initial auth state
@@ -656,6 +658,8 @@ export default function App() {
                 error={voiceError}
                 onClearError={clearError}
                 isSupported={voiceSupported}
+                selectedLang={voiceLang}
+                onLangChange={setVoiceLang}
               />
               {/* Image upload search button */}
               <ImageButton
