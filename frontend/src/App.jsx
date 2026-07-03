@@ -465,6 +465,18 @@ export default function App() {
     sendMessage(input);
   }
 
+  // ── TTS (auto-speak replies) toggle — off by default, saved to localStorage ──
+  const [ttsEnabled, setTtsEnabled] = useState(() => {
+    try { return localStorage.getItem("kapruka_tts_enabled") === "true"; } catch { return false; }
+  });
+  function toggleTts() {
+    setTtsEnabled((prev) => {
+      const next = !prev;
+      try { localStorage.setItem("kapruka_tts_enabled", String(next)); } catch {}
+      return next;
+    });
+  }
+
   // ── Voice integration ──────────────────────────────────────────────────────
   // useVoice receives the existing sendMessage() and messages so voice reuses
   // the exact same chat pipeline. No business logic is duplicated.
@@ -477,7 +489,7 @@ export default function App() {
     isSupported: voiceSupported,
     selectedLang: voiceLang,
     setSelectedLang: setVoiceLang,
-  } = useVoice({ sendMessage, messages });
+  } = useVoice({ sendMessage, messages, ttsEnabled });
 
   // Show a loading spinner while Firebase resolves initial auth state
   if (firebaseUser === undefined) {
@@ -649,7 +661,7 @@ export default function App() {
                 disabled={loading}
                 className="flex-1 bg-white border border-cream-200 rounded-full px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal/40"
               />
-              {/* Voice button — sits between text input and send button */}
+              {/* Voice button */}
               <VoiceButton
                 voiceState={voiceState}
                 onStart={startListening}
@@ -661,6 +673,22 @@ export default function App() {
                 selectedLang={voiceLang}
                 onLangChange={setVoiceLang}
               />
+              {/* Speaker toggle — only show when voice is supported */}
+              {voiceSupported && (
+                <button
+                  type="button"
+                  onClick={toggleTts}
+                  title={ttsEnabled ? "Auto-speak replies: ON — click to turn off" : "Auto-speak replies: OFF — click to turn on"}
+                  aria-label={ttsEnabled ? "Disable auto-speak" : "Enable auto-speak"}
+                  className={`w-10 h-10 shrink-0 rounded-full flex items-center justify-center transition-all duration-200 ${
+                    ttsEnabled
+                      ? "bg-teal text-white shadow-sm"
+                      : "bg-cream-200 text-charcoal/40 hover:text-charcoal/70 hover:bg-cream-300"
+                  }`}
+                >
+                  {ttsEnabled ? <SpeakerOnIcon /> : <SpeakerOffIcon />}
+                </button>
+              )}
               {/* Image upload search button */}
               <ImageButton
                 onImageSelected={sendImageMessage}
@@ -696,5 +724,26 @@ export default function App() {
         </div>
       </div>
     </div>
+  );
+}
+
+// ── Speaker icon components for the TTS toggle ───────────────────────────────
+function SpeakerOnIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+      <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+      <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+    </svg>
+  );
+}
+
+function SpeakerOffIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+      <line x1="23" y1="9" x2="17" y2="15" />
+      <line x1="17" y1="9" x2="23" y2="15" />
+    </svg>
   );
 }

@@ -38,7 +38,7 @@ const LANG_HINT = {
   english: "",            // No prefix needed for English
 };
 
-export function useVoice({ sendMessage, messages }) {
+export function useVoice({ sendMessage, messages, ttsEnabled = false }) {
   /** @type {[VoiceState, Function]} */
   const [voiceState, setVoiceState] = useState("idle");
   const [error, setError] = useState(null);
@@ -112,6 +112,12 @@ export function useVoice({ sendMessage, messages }) {
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Keep ttsEnabled in a ref so the message-watcher effect always reads the latest value
+  const ttsEnabledRef = useRef(ttsEnabled);
+  useEffect(() => {
+    ttsEnabledRef.current = ttsEnabled;
+  }, [ttsEnabled]);
+
   // ── Watch messages for new assistant response ────────────────────────────────
   useEffect(() => {
     if (!pendingResponseRef.current) return;
@@ -139,10 +145,16 @@ export function useVoice({ sendMessage, messages }) {
       latestAssistant || [...newMessages].reverse().find((m) => m.role === "assistant");
 
     if (lastAssistantMsg && !lastAssistantMsg.streaming) {
-      // New completed assistant message arrived — speak it
       pendingResponseRef.current = false;
-      setVoiceState("speaking");
-      SpeechPlayerService.speak(lastAssistantMsg.text || "");
+
+      if (ttsEnabledRef.current) {
+        // TTS is ON — speak the reply
+        setVoiceState("speaking");
+        SpeechPlayerService.speak(lastAssistantMsg.text || "");
+      } else {
+        // TTS is OFF — just return to idle silently
+        setVoiceState("idle");
+      }
     }
   }, [messages]);
 
