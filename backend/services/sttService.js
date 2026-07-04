@@ -151,11 +151,42 @@ export async function transcribeSpeech(
   throw lastError;
 }
 
+// Common English words (stop words and conversational/shopping terms).
+// Used to identify if the en-US transcriber produced a coherent English phrase.
+const COMMON_ENGLISH_WORDS = new Set([
+  "the", "a", "an", "and", "or", "but", "if", "for", "to", "in", "on", "at", "by", "of", "with",
+  "about", "is", "was", "are", "were", "been", "have", "has", "had", "do", "does", "did",
+  "i", "you", "he", "she", "it", "we", "they", "my", "your", "his", "her", "its", "our", "their",
+  "me", "him", "us", "them", "this", "that", "these", "those", "what", "which", "who", "why", "how",
+  "where", "when", "some", "any", "no", "not", "all", "can", "will", "just", "should", "would",
+  "show", "send", "gift", "gifts", "cake", "cakes", "flower", "flowers", "chocolate", "chocolates",
+  "buy", "order", "price", "delivery", "deliver", "location", "address", "cost", "hello", "hi",
+  "please", "thank", "thanks", "wife", "mother", "father", "husband", "friend", "birthday",
+  "anniversary", "today", "tomorrow", "yesterday", "now", "here", "there", "good", "morning",
+  "evening", "night", "day", "welcome", "card", "message", "write", "happy", "love", "sorry",
+  "apology", "wrong", "late", "drink", "beer", "wine", "alcohol", "drunk", "angry", "upset",
+  "want", "need", "like", "love", "prefer", "choose", "select", "find", "search", "get"
+]);
+
+/**
+ * Calculate the proportion of valid English words in a text block.
+ *
+ * @param {string} text
+ * @returns {number} Float 0.0 to 1.0 representing English word density
+ */
+function getEnglishScore(text) {
+  if (!text) return 0;
+  const words = text.toLowerCase().replace(/[^a-z\s]/g, "").split(/\s+/).filter(Boolean);
+  if (words.length === 0) return 0;
+  const matches = words.filter(w => COMMON_ENGLISH_WORDS.has(w)).length;
+  return matches / words.length;
+}
+
 /**
  * Automatically identify language and transcribe the spoken audio.
  * Runs transcriptions for Sinhala, Tamil, and English in parallel, then
  * picks the most accurate result using script analysis (detecting native
- * Unicode ranges for regional scripts).
+ * Unicode ranges for regional scripts) and English syntax scoring.
  *
  * @param {Buffer} audioBuffer
  * @param {string} contentType
@@ -186,6 +217,20 @@ export async function transcribeSpeechAuto(
   // Detect script characters to verify regional language matches
   const hasSinhalaScript = /[\u0D80-\u0DFF]/.test(siText);
   const hasTamilScript   = /[\u0B80-\u0BFF]/.test(taText);
+
+  // Evaluate the English transcription quality
+  const enScore = getEnglishScore(enText);
+  const enWordCount = enText.trim().split(/\s+/).filter(Boolean).length;
+  console.log(` -> English evaluation: score=${enScore.toFixed(2)}, wordCount=${enWordCount}`);
+
+  // If the English transcript contains coherent English grammar/words, trust it
+  // over the Sinhala/Tamil engines, which will otherwise write English words
+  // phonetically in Sinhala/Tamil script (e.g. transcribing "birthday gift" as "බර්ත්ඩේ ගිෆ්ට්").
+  const isCoherentEnglish = enScore >= 0.6 && enWordCount >= 2;
+
+  if (isCoherentEnglish) {
+    return { transcript: enText.trim(), language: "english" };
+  }
 
   // 1. Prioritize native Sinhala script matched from the si-LK engine
   if (hasSinhalaScript && siText.trim()) {
