@@ -15,6 +15,17 @@ import https from "https";
 const AZURE_SPEECH_KEY    = process.env.AZURE_SPEECH_KEY    || "";
 const AZURE_SPEECH_REGION = process.env.AZURE_SPEECH_REGION || "eastasia";
 
+// ─── Startup config validation ───────────────────────────────────────────────
+if (!AZURE_SPEECH_KEY) {
+  console.warn("[sttService] ⚠️  AZURE_SPEECH_KEY is not set. Speech-to-text will be disabled.");
+  console.warn("[sttService]    → Set AZURE_SPEECH_KEY in Vercel environment variables (project: kapruka).");
+} else if (AZURE_SPEECH_KEY.length < 20) {
+  console.warn("[sttService] ⚠️  AZURE_SPEECH_KEY looks malformed (too short). Double-check it in Vercel env vars.");
+}
+if (!process.env.AZURE_SPEECH_REGION) {
+  console.warn(`[sttService] ℹ️  AZURE_SPEECH_REGION not set — defaulting to '${AZURE_SPEECH_REGION}'.`);
+}
+
 // Keep-Alive HTTPS agent to optimize latency for concurrent Azure REST calls
 const keepAliveAgent = new https.Agent({ keepAlive: true, keepAliveMsecs: 15000 });
 
@@ -65,9 +76,20 @@ function _callAzureSTT(audioBuffer, language, contentType, region) {
       res.on("end",   () => {
         console.log(`[Azure STT] HTTP ${res.statusCode} | region=${region} | lang=${language} | body=${body.slice(0, 300)}`);
 
-        // 4xx on these endpoints typically means the region or key is wrong.
-        // Propagate so the caller can retry with a fallback region.
-        if (res.statusCode === 400 || res.statusCode === 404 || res.statusCode === 403) {
+        // 401 / 403 = authentication failure (wrong/expired key). Propagate
+        // immediately — retrying other regions won't help.
+        // 400 / 404 = region or language not supported — allow fallback retry.
+        if (res.statusCode === 401 || res.statusCode === 403) {
+          const authErr = Object.assign(
+            new Error(
+              `Azure STT auth failure (HTTP ${res.statusCode}). ` +
+              "The AZURE_SPEECH_KEY is likely expired or invalid — rotate it in the Azure Portal and update Vercel env vars."
+            ),
+            { httpStatus: res.statusCode }
+          );
+          return reject(authErr);
+        }
+        if (res.statusCode === 400 || res.statusCode === 404) {
           return reject(Object.assign(
             new Error(`Azure STT HTTP ${res.statusCode}: ${body.slice(0, 200)}`),
             { httpStatus: res.statusCode }
@@ -140,8 +162,8 @@ export async function transcribeSpeech(
     } catch (err) {
       lastError = err;
       // Only retry on HTTP 400/404 (region/language not supported).
-      // For timeouts, network errors, or auth failures (403 key issue), propagate immediately.
-      if (!err.httpStatus || err.httpStatus === 403) {
+      // Auth failures (401/403) and network errors should not be retried.
+      if (!err.httpStatus || err.httpStatus === 401 || err.httpStatus === 403) {
         throw err;
       }
       console.warn(`[Azure STT] Region '${region}' returned HTTP ${err.httpStatus} for lang=${language}. Trying next region...`);

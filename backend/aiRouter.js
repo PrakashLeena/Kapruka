@@ -16,9 +16,23 @@
 // ─── Provider config (read at module load; dotenv already applied in server.js) ──
 const TGI_ENDPOINT_URL = process.env.TGI_ENDPOINT_URL?.replace(/\/$/, "") || "";
 const TGI_API_KEY      = process.env.TGI_API_KEY || "";
+const TGI_MODEL        = process.env.TGI_MODEL || "tgi";
+
 const OPENAI_API_KEY   = process.env.OPENAI_API_KEY || "";
 const GEMINI_API_KEY   = process.env.GEMINI_API_KEY || "";
 const NVIDIA_QWEN_KEY  = process.env.NVIDIA_QWEN_KEY || "";
+
+
+// Startup sanity check: warn if TGI_ENDPOINT_URL looks like NVIDIA NIM but TGI_MODEL is still
+// the default "tgi" placeholder (which NVIDIA NIM will reject with a 400 bad model error).
+if (TGI_ENDPOINT_URL.includes("integrate.api.nvidia.com") && TGI_MODEL === "tgi") {
+  console.warn(
+    "[aiRouter] ⚠️  TGI_ENDPOINT_URL points to NVIDIA NIM but TGI_MODEL is still 'tgi'. " +
+    "NVIDIA NIM will reject this with a 400 error. " +
+    "Set TGI_MODEL=qwen/qwen3.5-397b-a17b (or your chosen NIM model slug) in Vercel env vars."
+  );
+}
+
 
 // Timeout budgets (ms)
 const TGI_TIMEOUT_MS         = 30_000;
@@ -43,7 +57,37 @@ export function getProviderStatus() {
 // ─── Internal: low-level fetch wrappers ──────────────────────────────────────
 
 /**
- * POST to the HF TGI endpoint (OpenAI-compatible /v1/chat/completions).
+ * Helper to fetch with retries on HTTP 429 (Too Many Requests) using exponential backoff.
+ * Also handles transient fetch failures/timeouts.
+ */
+async function fetchWithRetry(url, options, maxRetries = 3, baseDelayMs = 1000) {
+  let attempt = 0;
+  while (true) {
+    try {
+      const res = await fetch(url, options);
+      if (res.status === 429 && attempt < maxRetries) {
+        attempt++;
+        const delay = baseDelayMs * Math.pow(2, attempt - 1) * (0.8 + Math.random() * 0.4); // exponential backoff with jitter
+        console.warn(`[aiRouter] HTTP 429 received from ${url}. Retrying attempt ${attempt}/${maxRetries} after ${Math.round(delay)}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+      return res;
+    } catch (err) {
+      if (attempt < maxRetries && (err.name === "AbortError" || err.message.includes("fetch") || err.message.includes("network"))) {
+        attempt++;
+        const delay = baseDelayMs * Math.pow(2, attempt - 1);
+        console.warn(`[aiRouter] Network error/timeout fetching ${url}: ${err.message}. Retrying attempt ${attempt}/${maxRetries} after ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
+/**
+
  * @param {object[]} messages  OpenAI-format message array
  * @param {object[]|undefined} tools   OpenAI function-calling tools
  * @param {boolean} stream
@@ -51,7 +95,8 @@ export function getProviderStatus() {
  */
 async function _fetchTGI(messages, tools, stream) {
   const body = {
-    model: "tgi",   // TGI ignores the model name but requires the field
+    model: TGI_MODEL,   // "tgi" for HF TGI endpoints; set TGI_MODEL env var for NVIDIA NIM / other providers
+
     messages,
     temperature: 0.2,
     top_p: 1,
@@ -59,7 +104,7 @@ async function _fetchTGI(messages, tools, stream) {
   };
   if (tools && tools.length > 0) body.tools = tools;
 
-  return fetch(`${TGI_ENDPOINT_URL}/v1/chat/completions`, {
+  return fetchWithRetry(`${TGI_ENDPOINT_URL}/v1/chat/completions`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -87,7 +132,7 @@ async function _fetchOpenAI(messages, tools, stream) {
   };
   if (tools && tools.length > 0) body.tools = tools;
 
-  return fetch("https://api.openai.com/v1/chat/completions", {
+  return fetchWithRetry("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -118,7 +163,7 @@ async function _fetchNvidiaQwen(messages, tools, stream) {
   };
   if (tools && tools.length > 0) body.tools = tools;
 
-  return fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
+  return fetchWithRetry("https://integrate.api.nvidia.com/v1/chat/completions", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -280,7 +325,7 @@ Examples: "dark chocolate gift box", "birthday cake chocolate", "silk saree blue
   if (OPENAI_API_KEY) {
     try {
       console.log("[aiRouter] → image | provider: GPT-4o Vision");
-      const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      const res = await fetchWithRetry("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -324,7 +369,7 @@ Examples: "dark chocolate gift box", "birthday cake chocolate", "silk saree blue
   // ── Tier 2: Gemini 1.5 Flash Vision ──────────────────────────────────────
   if (GEMINI_API_KEY) {
     console.log("[aiRouter] → image | provider: Gemini 1.5 Flash Vision (fallback)");
-    const res = await fetch(
+    const res = await fetchWithRetry(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
       {
         method: "POST",
