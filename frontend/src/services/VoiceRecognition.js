@@ -38,10 +38,10 @@ const BACKEND_URL = (
 ).replace(/\/$/, "");
 
 // ── Language → BCP-47 locale for Azure STT ───────────────────────────────────
-// Azure natively supports all three. si-LK works properly here!
+// Azure natively supports si-LK and ta-IN.
 const LANG_MAP = {
   sinhala: "si-LK",
-  tamil:   "ta-LK",
+  tamil:   "ta-IN", // Azure STT does not support ta-LK; ta-IN is the correct standard code.
   english: "en-US",
 };
 
@@ -75,7 +75,8 @@ const MAX_RECORDING_MS        = 15000; // hard cap — auto-stop after 15 s
 // ── Language-specific user-facing error messages ──────────────────────────────
 const NO_SPEECH_MSG = {
   "si-LK": "කතාව හඳුනාගත නොහැකි විය. කරුණාකර නැවත උත්සාහ කරන්න.",   // Sinhala
-  "ta-LK": "பேச்சு புரியவில்லை. மீண்டும் முயற்சிக்கவும்.",             // Tamil
+  "ta-LK": "பேச்சு புரியவில்லை. மீண்டும் முயற்சிக்கவும்.",             // Tamil (LK fallback)
+  "ta-IN": "பேச்சு புரியவில்லை. மீண்டும் முயற்சிக்கவும்.",             // Tamil
   "en-US": "No speech detected. Please speak clearly and try again.",
 };
 
@@ -115,9 +116,9 @@ function _startSilenceDetection(stream) {
     analyser.fftSize = 256;
     source.connect(analyser);
 
-    // Pick silence duration based on active language
-    const isLK = _lang === "si-LK" || _lang === "ta-LK";
-    const silenceDuration = isLK ? SILENCE_DURATION_MS_LK : SILENCE_DURATION_MS_EN;
+    // Pick silence duration based on active language (Sinhala/Tamil get a longer window)
+    const isRegional = _lang.startsWith("si") || _lang.startsWith("ta");
+    const silenceDuration = isRegional ? SILENCE_DURATION_MS_LK : SILENCE_DURATION_MS_EN;
     console.log(`[VoiceRecognition] Silence window: ${silenceDuration}ms (lang=${_lang})`);
 
     const dataArr = new Uint8Array(analyser.frequencyBinCount);

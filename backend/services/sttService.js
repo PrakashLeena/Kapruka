@@ -1,14 +1,14 @@
 // backend/services/sttService.js
 //
 // Azure Cognitive Services Speech-to-Text REST API wrapper.
-// Supports Sinhala (si-LK), Tamil (ta-LK), and English (en-US).
+// Supports Sinhala (si-LK), Tamil (ta-IN), and English (en-US).
 //
 // Azure STT DOES natively support si-LK — unlike the browser's Web Speech API
 // (Chrome does not support Sinhala at all). This is the correct solution for
 // Sinhala voice input.
 //
-// Region note: 'centralindia' has the broadest language coverage including
-// si-LK, ta-LK and en-US. The older 'eastasia' region does NOT support si-LK.
+// Region note: 'eastasia' is the primary region, and it supports both si-LK
+// and ta-IN.
 
 import https from "https";
 
@@ -16,8 +16,7 @@ const AZURE_SPEECH_KEY    = process.env.AZURE_SPEECH_KEY    || "";
 const AZURE_SPEECH_REGION = process.env.AZURE_SPEECH_REGION || "eastasia";
 
 // Fallback regions tried if the primary returns 400/404 for an unsupported
-// language/locale. eastasia supports si-LK, ta-LK, en-US. Fallbacks are a
-// safety net in case a specific locale isn't available in the primary region.
+// language/locale. Fallbacks are a safety net.
 const FALLBACK_REGIONS = ["centralindia", "southeastasia"];
 
 export function isAzureSttConfigured() {
@@ -28,7 +27,7 @@ export function isAzureSttConfigured() {
  * Perform a single Azure STT REST call.
  *
  * @param {Buffer} audioBuffer
- * @param {string} language     - BCP-47 locale: 'si-LK' | 'ta-LK' | 'en-US'
+ * @param {string} language     - BCP-47 locale: 'si-LK' | 'ta-IN' | 'en-US'
  * @param {string} contentType
  * @param {string} region       - Azure region slug
  * @returns {Promise<string>}   Transcribed text, or '' if no speech detected
@@ -108,7 +107,7 @@ function _callAzureSTT(audioBuffer, language, contentType, region) {
  * a 400/404 (e.g. unsupported language in that region).
  *
  * @param {Buffer} audioBuffer  - Raw audio binary (webm/opus, ogg/opus, or wav)
- * @param {string} language     - BCP-47 locale: 'si-LK' | 'ta-LK' | 'en-US'
+ * @param {string} language     - BCP-47 locale: 'si-LK' | 'ta-IN' | 'en-US'
  * @param {string} contentType  - MIME type matching the audio data
  * @returns {Promise<string>}   Transcribed text, or '' if no speech detected
  */
