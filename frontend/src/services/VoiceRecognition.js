@@ -58,9 +58,15 @@ let _onErrorCallback  = null;
 let _onEndCallback    = null;
 
 // ── Silence detection config ──────────────────────────────────────────────────
-const SILENCE_THRESHOLD_DB  = 18;   // amplitude avg below this → silence
-const SILENCE_DURATION_MS   = 2000; // ms of silence before auto-stop
-const MAX_RECORDING_MS       = 10000; // hard cap — auto-stop after 10 s
+// Threshold: Web Audio getByteFrequencyData() returns 0–255 per bin.
+// 18 was too low — normal room tone could trigger silence and cut off
+// Sinhala/Tamil speakers mid-phrase. 25 is a better floor.
+const SILENCE_THRESHOLD_DB  = 25;   // amplitude avg below this → silence
+// Sinhala & Tamil have longer natural inter-word pauses than English.
+// Language-aware windows are applied in _startSilenceDetection().
+const SILENCE_DURATION_MS_EN  = 2500; // ms of silence for English
+const SILENCE_DURATION_MS_LK  = 3000; // ms of silence for Sinhala / Tamil
+const MAX_RECORDING_MS        = 15000; // hard cap — auto-stop after 15 s
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
@@ -84,7 +90,13 @@ function _clearTimers() {
 
 /**
  * Set up silence detection using Web Audio API AnalyserNode.
- * When the mic goes quiet for SILENCE_DURATION_MS, auto-stop.
+ * When the mic goes quiet for the language-appropriate silence window, auto-stop.
+ *
+ * English  → 2.5 s  (fast paced, shorter pauses)
+ * Sinhala  → 3.0 s  (longer natural inter-word pauses in spoken Sinhala)
+ * Tamil    → 3.0 s  (same — Tamil syllables have longer vowel stretches)
+ *
+ * @param {MediaStream} stream
  */
 function _startSilenceDetection(stream) {
   try {
@@ -93,6 +105,11 @@ function _startSilenceDetection(stream) {
     const analyser = _audioCtx.createAnalyser();
     analyser.fftSize = 256;
     source.connect(analyser);
+
+    // Pick silence window based on active language
+    const isLK = _lang === "si-LK" || _lang === "ta-LK";
+    const silenceDuration = isLK ? SILENCE_DURATION_MS_LK : SILENCE_DURATION_MS_EN;
+    console.log(`[VoiceRecognition] Silence window: ${silenceDuration}ms (lang=${_lang})`);
 
     const dataArr = new Uint8Array(analyser.frequencyBinCount);
     let silenceStart = null;
@@ -106,9 +123,9 @@ function _startSilenceDetection(stream) {
       if (avg < SILENCE_THRESHOLD_DB) {
         if (!silenceStart) {
           silenceStart = Date.now();
-        } else if (Date.now() - silenceStart >= SILENCE_DURATION_MS) {
-          // Silence long enough — auto stop
-          console.log("[VoiceRecognition] Silence detected — auto stopping");
+        } else if (Date.now() - silenceStart >= silenceDuration) {
+          // Sustained silence long enough — auto stop
+          console.log(`[VoiceRecognition] Silence detected (${silenceDuration}ms, avg=${avg.toFixed(1)}) — auto stopping`);
           if (_mediaRecorder && _mediaRecorder.state === "recording") {
             _mediaRecorder.stop();
           }
@@ -131,9 +148,18 @@ function _startSilenceDetection(stream) {
 /**
  * Send recorded audio to backend /api/speech/transcribe → Azure STT.
  */
+// Language-specific "nothing heard" messages shown to the user.
+const NO_SPEECH_MSG = {
+  "si-LK": "කතාව අහනකොට ගැටළුවක් ඇති වුණා. කරුණාකර නැවත උත්සාහ කරන්න.",  // Sinhala
+  "ta-LK": "பேச்சு புரியவில்லை. மீண்டும் முயற்சிக்கவும்.",                     // Tamil
+  "en-US": "No speech detected. Please speak clearly and try again.",
+};
+
 async function _transcribeAndFire(blob, mimeType) {
-  if (!blob || blob.size < 500) {
-    if (_onErrorCallback) _onErrorCallback("No speech detected. Please try again.");
+  // Minimum viable audio size — smaller blobs are almost certainly silence
+  if (!blob || blob.size < 1000) {
+    const msg = NO_SPEECH_MSG[_lang] || NO_SPEECH_MSG["en-US"];
+    if (_onErrorCallback) _onErrorCallback(msg);
     return;
   }
 
@@ -155,7 +181,10 @@ async function _transcribeAndFire(blob, mimeType) {
     if (transcript && transcript.trim()) {
       if (_onResultCallback) _onResultCallback(transcript.trim());
     } else {
-      if (_onErrorCallback) _onErrorCallback("No speech detected. Please speak clearly and try again.");
+      // Azure returned success but empty — speech was detected but not recognised.
+      // Give a language-appropriate hint.
+      const msg = NO_SPEECH_MSG[_lang] || NO_SPEECH_MSG["en-US"];
+      if (_onErrorCallback) _onErrorCallback(msg);
     }
   } catch (err) {
     console.error("[VoiceRecognition] Transcription error:", err.message);

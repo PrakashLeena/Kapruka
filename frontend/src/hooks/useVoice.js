@@ -10,6 +10,9 @@
  * Props:
  *   sendMessage  — the EXACT same sendMessage() function from App.jsx
  *   messages     — the live messages array from App.jsx
+ *   loading      — boolean — true while the backend is processing a request.
+ *                  If a voice transcript arrives while loading=true, it is
+ *                  queued here and auto-sent when loading returns to false.
  *
  * Returns:
  *   voiceState        — 'idle' | 'listening' | 'thinking' | 'speaking'
@@ -38,7 +41,7 @@ const LANG_HINT = {
   english: "",            // No prefix needed for English
 };
 
-export function useVoice({ sendMessage, messages }) {
+export function useVoice({ sendMessage, messages, loading = false }) {
   /** @type {[VoiceState, Function]} */
   const [voiceState, setVoiceState] = useState("idle");
   const [error, setError] = useState(null);
@@ -71,6 +74,26 @@ export function useVoice({ sendMessage, messages }) {
   const pendingResponseRef = useRef(false);
   const messagesLengthAtSendRef = useRef(0);
 
+  // Queue: holds a transcript that arrived while loading=true so it can be
+  // sent automatically as soon as the agent becomes idle.
+  const pendingVoiceRef = useRef(null);
+
+  // Keep a ref to loading so the onResult callback always reads current value.
+  const loadingRef = useRef(loading);
+  useEffect(() => {
+    loadingRef.current = loading;
+  }, [loading]);
+
+  // When loading drops from true → false, send any queued voice transcript.
+  useEffect(() => {
+    if (!loading && pendingVoiceRef.current) {
+      const queued = pendingVoiceRef.current;
+      pendingVoiceRef.current = null;
+      console.log("[useVoice] Sending queued voice transcript:", queued);
+      sendMessage(queued);
+    }
+  }, [loading]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── Register service callbacks once on mount ─────────────────────────────────
   useEffect(() => {
     // Speech recognition result → send to existing chat pipeline
@@ -90,7 +113,20 @@ export function useVoice({ sendMessage, messages }) {
       // Prepend language hint so LLM knows which language to respond in,
       // PLUS 🎤 so it's visually distinguishable in the chat history.
       const hint = LANG_HINT[lang] || "";
-      sendMessage(`🎤 ${hint}${transcript}`);
+      const fullText = `🎤 ${hint}${transcript}`;
+
+      // If the agent is currently processing a prior message, queue this
+      // transcript and send it as soon as the agent becomes idle.
+      // This prevents voice input from being silently dropped.
+      if (loadingRef.current) {
+        console.log("[useVoice] Agent is busy — queuing voice transcript for later.");
+        pendingVoiceRef.current = fullText;
+        // Stay in thinking state — the queued useEffect will trigger sendMessage
+        // once loading becomes false, which will fire onResult/onEnd naturally.
+        return;
+      }
+
+      sendMessage(fullText);
     });
 
     // Speech recognition ended — recording is done, transcription is in progress.

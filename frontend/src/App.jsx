@@ -460,7 +460,7 @@ export default function App() {
     isSupported: voiceSupported,
     selectedLang: voiceLang,
     setSelectedLang: setVoiceLang,
-  } = useVoice({ sendMessage, messages });
+  } = useVoice({ sendMessage, messages, loading });
 
   // Show a loading spinner while Firebase resolves initial auth state
   if (firebaseUser === undefined) {

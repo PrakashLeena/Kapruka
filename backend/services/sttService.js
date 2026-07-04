@@ -6,40 +6,36 @@
 // Azure STT DOES natively support si-LK — unlike the browser's Web Speech API
 // (Chrome does not support Sinhala at all). This is the correct solution for
 // Sinhala voice input.
+//
+// Region note: 'centralindia' has the broadest language coverage including
+// si-LK, ta-LK and en-US. The older 'eastasia' region does NOT support si-LK.
 
 import https from "https";
 
 const AZURE_SPEECH_KEY    = process.env.AZURE_SPEECH_KEY    || "";
-const AZURE_SPEECH_REGION = process.env.AZURE_SPEECH_REGION || "eastasia";
+const AZURE_SPEECH_REGION = process.env.AZURE_SPEECH_REGION || "centralindia";
+
+// Fallback region tried if the primary returns 400/404 for an unsupported language.
+// centralindia → southeastasia are the two regions with widest si-LK/ta-LK support.
+const FALLBACK_REGIONS = ["southeastasia", "eastus"];
 
 export function isAzureSttConfigured() {
   return !!AZURE_SPEECH_KEY;
 }
 
 /**
- * Transcribe audio using Azure Cognitive Services Speech-to-Text REST API.
+ * Perform a single Azure STT REST call.
  *
- * @param {Buffer} audioBuffer  - Raw audio binary (webm/opus, ogg/opus, or wav)
+ * @param {Buffer} audioBuffer
  * @param {string} language     - BCP-47 locale: 'si-LK' | 'ta-LK' | 'en-US'
- * @param {string} contentType  - MIME type matching the audio data
+ * @param {string} contentType
+ * @param {string} region       - Azure region slug
  * @returns {Promise<string>}   Transcribed text, or '' if no speech detected
+ * @throws  {Error}             On HTTP/network errors or unrecognised statuses
  */
-export async function transcribeSpeech(
-  audioBuffer,
-  language    = "si-LK",
-  contentType = "audio/webm;codecs=opus"
-) {
-  if (!AZURE_SPEECH_KEY) {
-    throw new Error("AZURE_SPEECH_KEY is not configured. Set it in your .env and Vercel environment variables.");
-  }
-  if (!audioBuffer || audioBuffer.length === 0) {
-    throw new Error("No audio data provided to transcribeSpeech.");
-  }
-
-  // Azure STT REST API endpoint
-  // format=simple → returns { RecognitionStatus, DisplayText, Duration, Offset }
+function _callAzureSTT(audioBuffer, language, contentType, region) {
   const endpoint =
-    `https://${AZURE_SPEECH_REGION}.stt.speech.microsoft.com` +
+    `https://${region}.stt.speech.microsoft.com` +
     `/speech/recognition/conversation/cognitiveservices/v1` +
     `?language=${encodeURIComponent(language)}&format=simple`;
 
@@ -63,7 +59,17 @@ export async function transcribeSpeech(
       res.setEncoding("utf8");
       res.on("data",  (chunk) => { body += chunk; });
       res.on("end",   () => {
-        console.log(`[Azure STT] HTTP ${res.statusCode} | lang=${language} | body=${body.slice(0, 300)}`);
+        console.log(`[Azure STT] HTTP ${res.statusCode} | region=${region} | lang=${language} | body=${body.slice(0, 300)}`);
+
+        // 4xx on these endpoints typically means the region or key is wrong.
+        // Propagate so the caller can retry with a fallback region.
+        if (res.statusCode === 400 || res.statusCode === 404 || res.statusCode === 403) {
+          return reject(Object.assign(
+            new Error(`Azure STT HTTP ${res.statusCode}: ${body.slice(0, 200)}`),
+            { httpStatus: res.statusCode }
+          ));
+        }
+
         try {
           const json = JSON.parse(body);
           const status = json.RecognitionStatus;
@@ -93,4 +99,50 @@ export async function transcribeSpeech(
     req.write(audioBuffer);
     req.end();
   });
+}
+
+/**
+ * Transcribe audio using Azure Cognitive Services Speech-to-Text REST API.
+ * Automatically retries with fallback regions if the primary region returns
+ * a 400/404 (e.g. unsupported language in that region).
+ *
+ * @param {Buffer} audioBuffer  - Raw audio binary (webm/opus, ogg/opus, or wav)
+ * @param {string} language     - BCP-47 locale: 'si-LK' | 'ta-LK' | 'en-US'
+ * @param {string} contentType  - MIME type matching the audio data
+ * @returns {Promise<string>}   Transcribed text, or '' if no speech detected
+ */
+export async function transcribeSpeech(
+  audioBuffer,
+  language    = "si-LK",
+  contentType = "audio/webm;codecs=opus"
+) {
+  if (!AZURE_SPEECH_KEY) {
+    throw new Error("AZURE_SPEECH_KEY is not configured. Set it in your .env and Vercel environment variables.");
+  }
+  if (!audioBuffer || audioBuffer.length === 0) {
+    throw new Error("No audio data provided to transcribeSpeech.");
+  }
+
+  const regionsToTry = [AZURE_SPEECH_REGION, ...FALLBACK_REGIONS.filter(r => r !== AZURE_SPEECH_REGION)];
+
+  let lastError;
+  for (const region of regionsToTry) {
+    try {
+      const transcript = await _callAzureSTT(audioBuffer, language, contentType, region);
+      if (region !== AZURE_SPEECH_REGION) {
+        console.warn(`[Azure STT] Primary region '${AZURE_SPEECH_REGION}' failed for ${language}; succeeded with fallback '${region}'.`);
+      }
+      return transcript;
+    } catch (err) {
+      lastError = err;
+      // Only retry on HTTP 400/404 (region/language not supported).
+      // For timeouts, network errors, or auth failures (403 key issue), propagate immediately.
+      if (!err.httpStatus || err.httpStatus === 403) {
+        throw err;
+      }
+      console.warn(`[Azure STT] Region '${region}' returned HTTP ${err.httpStatus} for lang=${language}. Trying next region...`);
+    }
+  }
+
+  throw lastError;
 }
