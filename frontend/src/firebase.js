@@ -1,5 +1,6 @@
 // firebase.js — Firebase initialization and auth helpers
 import { initializeApp, getApps, getApp } from "firebase/app";
+import { getAnalytics } from "firebase/analytics";
 import {
   getAuth,
   GoogleAuthProvider,
@@ -12,18 +13,19 @@ import {
 } from "firebase/auth";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyAfvmHh7Xh4iTY9-5UP4qYLw0RxINyj2ns",
-  authDomain: "kapruka-12737.firebaseapp.com",
-  projectId: "kapruka-12737",
-  storageBucket: "kapruka-12737.firebasestorage.app",
-  messagingSenderId: "469498840773",
-  appId: "1:469498840773:web:e4ecf15f71b4d50f83d2ac",
-  measurementId: "G-ZDZCSMWGHS",
+  apiKey: "AIzaSyDVVjLgVJRxcCzGEAc20lqT3sMtwqGdKBY",
+  authDomain: "kapruka-5b90a.firebaseapp.com",
+  projectId: "kapruka-5b90a",
+  storageBucket: "kapruka-5b90a.firebasestorage.app",
+  messagingSenderId: "943317842783",
+  appId: "1:943317842783:web:8759e1ce5739805a21d4ea",
+  measurementId: "G-5PJCEY9C3R"
 };
 
 // Use existing app if already initialized (safe for Vite HMR)
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 
+export const analytics = getAnalytics(app);
 export const auth = getAuth(app);
 
 // Force browser language for auth UI messages
