@@ -13,11 +13,12 @@
 import https from "https";
 
 const AZURE_SPEECH_KEY    = process.env.AZURE_SPEECH_KEY    || "";
-const AZURE_SPEECH_REGION = process.env.AZURE_SPEECH_REGION || "centralindia";
+const AZURE_SPEECH_REGION = process.env.AZURE_SPEECH_REGION || "eastasia";
 
-// Fallback region tried if the primary returns 400/404 for an unsupported language.
-// centralindia → southeastasia are the two regions with widest si-LK/ta-LK support.
-const FALLBACK_REGIONS = ["southeastasia", "eastus"];
+// Fallback regions tried if the primary returns 400/404 for an unsupported
+// language/locale. eastasia supports si-LK, ta-LK, en-US. Fallbacks are a
+// safety net in case a specific locale isn't available in the primary region.
+const FALLBACK_REGIONS = ["centralindia", "southeastasia"];
 
 export function isAzureSttConfigured() {
   return !!AZURE_SPEECH_KEY;
