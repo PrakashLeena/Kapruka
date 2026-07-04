@@ -31,6 +31,7 @@ const LABELS = {
 };
 
 const LANG_OPTIONS = [
+  { key: "auto",    label: "Auto", title: "Auto Detect" },
   { key: "sinhala", label: "සිං", title: "සිංහල (Sinhala)" },
   { key: "english", label: "EN",  title: "English" },
   { key: "tamil",   label: "தமி",  title: "தமிழ் (Tamil)" },
@@ -44,7 +45,7 @@ export default function VoiceButton({
   error,
   onClearError,
   isSupported,
-  selectedLang = "sinhala",
+  selectedLang = "auto",
   onLangChange,
 }) {
   const [showLangPicker, setShowLangPicker] = useState(false);

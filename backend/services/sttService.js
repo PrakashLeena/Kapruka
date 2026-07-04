@@ -15,6 +15,9 @@ import https from "https";
 const AZURE_SPEECH_KEY    = process.env.AZURE_SPEECH_KEY    || "";
 const AZURE_SPEECH_REGION = process.env.AZURE_SPEECH_REGION || "eastasia";
 
+// Keep-Alive HTTPS agent to optimize latency for concurrent Azure REST calls
+const keepAliveAgent = new https.Agent({ keepAlive: true, keepAliveMsecs: 15000 });
+
 // Fallback regions tried if the primary returns 400/404 for an unsupported
 // language/locale. Fallbacks are a safety net.
 const FALLBACK_REGIONS = ["centralindia", "southeastasia"];
@@ -46,6 +49,7 @@ function _callAzureSTT(audioBuffer, language, contentType, region) {
       hostname : urlObj.hostname,
       path     : urlObj.pathname + urlObj.search,
       method   : "POST",
+      agent    : keepAliveAgent, // Reuse sockets for parallel requests
       headers  : {
         "Ocp-Apim-Subscription-Key" : AZURE_SPEECH_KEY,
         "Content-Type"              : contentType,
@@ -145,4 +149,66 @@ export async function transcribeSpeech(
   }
 
   throw lastError;
+}
+
+/**
+ * Automatically identify language and transcribe the spoken audio.
+ * Runs transcriptions for Sinhala, Tamil, and English in parallel, then
+ * picks the most accurate result using script analysis (detecting native
+ * Unicode ranges for regional scripts).
+ *
+ * @param {Buffer} audioBuffer
+ * @param {string} contentType
+ * @returns {Promise<{ transcript: string, language: 'sinhala'|'tamil'|'english' }>}
+ */
+export async function transcribeSpeechAuto(
+  audioBuffer,
+  contentType = "audio/webm;codecs=opus"
+) {
+  console.log(`[Azure STT] Starting parallel language auto-detection...`);
+  const t0 = Date.now();
+
+  const [siResult, taResult, enResult] = await Promise.allSettled([
+    transcribeSpeech(audioBuffer, "si-LK", contentType),
+    transcribeSpeech(audioBuffer, "ta-IN", contentType),
+    transcribeSpeech(audioBuffer, "en-US", contentType),
+  ]);
+
+  const siText = siResult.status === "fulfilled" ? siResult.value : "";
+  const taText = taResult.status === "fulfilled" ? taResult.value : "";
+  const enText = enResult.status === "fulfilled" ? enResult.value : "";
+
+  console.log(`[Azure STT] Parallel LID completed in ${Date.now() - t0}ms`);
+  console.log(` -> Sinhala (si-LK): "${siText}"`);
+  console.log(` -> Tamil (ta-IN):   "${taText}"`);
+  console.log(` -> English (en-US): "${enText}"`);
+
+  // Detect script characters to verify regional language matches
+  const hasSinhalaScript = /[\u0D80-\u0DFF]/.test(siText);
+  const hasTamilScript   = /[\u0B80-\u0BFF]/.test(taText);
+
+  // 1. Prioritize native Sinhala script matched from the si-LK engine
+  if (hasSinhalaScript && siText.trim()) {
+    return { transcript: siText.trim(), language: "sinhala" };
+  }
+
+  // 2. Prioritize native Tamil script matched from the ta-IN engine
+  if (hasTamilScript && taText.trim()) {
+    return { transcript: taText.trim(), language: "tamil" };
+  }
+
+  // 3. Fallback to English transcript if it produced a non-empty result
+  if (enText.trim()) {
+    return { transcript: enText.trim(), language: "english" };
+  }
+
+  // 4. Final safety fallbacks if no script or English text matched
+  if (siText.trim()) {
+    return { transcript: siText.trim(), language: "sinhala" };
+  }
+  if (taText.trim()) {
+    return { transcript: taText.trim(), language: "tamil" };
+  }
+
+  return { transcript: "", language: "english" };
 }

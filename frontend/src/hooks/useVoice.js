@@ -46,14 +46,8 @@ export function useVoice({ sendMessage, messages, loading = false }) {
   const [voiceState, setVoiceState] = useState("idle");
   const [error, setError] = useState(null);
 
-  // Explicit language chosen by the user via the language picker
-  const [selectedLang, setSelectedLang] = useState(() => {
-    // Default based on browser locale; most Sri Lankan users will be on Sinhala
-    const bl = (navigator.language || "").toLowerCase();
-    if (bl.startsWith("si")) return "sinhala";
-    if (bl.startsWith("ta")) return "tamil";
-    return "sinhala"; // default to sinhala for Kapruka's primary market
-  });
+  // Default to automatic language identification so the user doesn't need to switch manually.
+  const [selectedLang, setSelectedLang] = useState("auto");
 
   // Keep a ref to messages to avoid stale closure issues in the onResult listener
   const messagesRef = useRef(messages);
@@ -67,7 +61,11 @@ export function useVoice({ sendMessage, messages, loading = false }) {
     selectedLangRef.current = selectedLang;
     // Keep recognition service in sync whenever user changes language
     VoiceRecognitionService.setLanguage(selectedLang);
-    SpeechPlayerService.setLanguage(selectedLang);
+    
+    // Auto uses client-side detection inside SpeechPlayerService, so only sync fixed selections
+    if (selectedLang !== "auto") {
+      SpeechPlayerService.setLanguage(selectedLang);
+    }
   }, [selectedLang]);
 
   // Track how many messages existed when we sent a voice message.
@@ -97,18 +95,19 @@ export function useVoice({ sendMessage, messages, loading = false }) {
   // ── Register service callbacks once on mount ─────────────────────────────────
   useEffect(() => {
     // Speech recognition result → send to existing chat pipeline
-    VoiceRecognitionService.onResult((transcript) => {
+    VoiceRecognitionService.onResult((transcript, detectedLang) => {
       // Transition: listening → thinking
       setVoiceState("thinking");
       pendingResponseRef.current = true;
       messagesLengthAtSendRef.current = messagesRef.current.length;
 
-      const lang = selectedLangRef.current;
+      // Prioritize explicit selection; fallback to detected language or default to English
+      const lang = selectedLangRef.current === "auto" ? (detectedLang || "english") : selectedLangRef.current;
 
-      // Sync TTS language with what was selected
+      // Sync TTS language with what was selected/detected
       SpeechPlayerService.setLanguage(lang);
 
-      console.log("[useVoice] Voice message in language:", lang, "transcript:", transcript);
+      console.log("[useVoice] Voice message language:", lang, "transcript:", transcript);
 
       // Prepend language hint so LLM knows which language to respond in,
       // PLUS 🎤 so it's visually distinguishable in the chat history.
@@ -179,7 +178,14 @@ export function useVoice({ sendMessage, messages, loading = false }) {
 
       // Real-time conversation: if user spoke, agent must speak back.
       setVoiceState("speaking");
-      SpeechPlayerService.speak(lastAssistantMsg.text || "");
+      
+      // Auto-detect response language dynamically so TTS voice selection is fully aligned
+      const responseText = lastAssistantMsg.text || "";
+      const detectedTtsLang = detectLanguage(responseText);
+      SpeechPlayerService.setLanguage(detectedTtsLang);
+      console.log(`[useVoice] Assistant voice language selected: ${detectedTtsLang}`);
+
+      SpeechPlayerService.speak(responseText);
     }
   }, [messages]);
 
@@ -193,7 +199,9 @@ export function useVoice({ sendMessage, messages, loading = false }) {
 
     const lang = selectedLangRef.current;
     VoiceRecognitionService.setLanguage(lang);
-    SpeechPlayerService.setLanguage(lang);
+    if (lang !== "auto") {
+      SpeechPlayerService.setLanguage(lang);
+    }
     console.log("[useVoice] Starting recognition in language:", lang);
 
     VoiceRecognitionService.start();

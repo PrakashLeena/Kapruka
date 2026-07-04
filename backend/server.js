@@ -17,7 +17,7 @@ import { buildSystemPrompt } from "./systemPrompt.js";
 import { callPrimaryStream, callPrimaryNonStream, analyzeImageForQuery, getProviderStatus } from "./aiRouter.js";
 import { romanToNativeScript } from "./services/transliterationService.js";
 import { synthesizeSpeech, isAzureTtsConfigured } from "./services/ttsService.js";
-import { transcribeSpeech, isAzureSttConfigured } from "./services/sttService.js";
+import { transcribeSpeech, transcribeSpeechAuto, isAzureSttConfigured } from "./services/sttService.js";
 
 
 const PORT = process.env.PORT || 3000;
@@ -1562,7 +1562,7 @@ app.post("/api/speech/synthesize", async (req, res) => {
 // Uses Azure STT which NATIVELY supports si-LK (Sinhala) — unlike Chrome's
 // Web Speech API which does not support Sinhala at all.
 app.post("/api/speech/transcribe", express.raw({ type: "*/*", limit: "10mb" }), async (req, res) => {
-  const language    = req.query.language    || "si-LK";  // BCP-47 locale
+  const language    = req.query.language    || "auto";  // default to auto-detection
   const contentType = req.headers["content-type"] || "audio/webm;codecs=opus";
 
   if (!isAzureSttConfigured()) {
@@ -1576,8 +1576,19 @@ app.post("/api/speech/transcribe", express.raw({ type: "*/*", limit: "10mb" }), 
 
   try {
     console.log(`[/api/speech/transcribe] lang=${language} size=${audioBuffer.length} type=${contentType}`);
-    const transcript = await transcribeSpeech(audioBuffer, language, contentType);
-    return res.json({ transcript });
+    
+    let transcript = "";
+    let detectedLang = null;
+
+    if (language === "auto") {
+      const result = await transcribeSpeechAuto(audioBuffer, contentType);
+      transcript = result.transcript;
+      detectedLang = result.language;
+    } else {
+      transcript = await transcribeSpeech(audioBuffer, language, contentType);
+    }
+
+    return res.json({ transcript, language: detectedLang });
   } catch (err) {
     console.error("[/api/speech/transcribe] Error:", err.message);
     return res.status(500).json({ error: "Speech transcription failed.", details: err.message });
