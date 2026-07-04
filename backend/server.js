@@ -314,16 +314,9 @@ app.use(helmet({
   // inline scripts/styles. Configure explicitly when ready.
   contentSecurityPolicy: false,
   crossOriginEmbedderPolicy: false,
-  // Allow microphone and camera — required for voice input and image search features.
-  // Helmet's default blocks both (camera=(), microphone=()) which breaks the app.
-  permittedCrossDomainPolicies: false,
-  permissionsPolicy: {
-    features: {
-      microphone: ["*"],
-      camera: ["*"],
-      geolocation: [],
-    },
-  },
+  // Disable permissionsPolicy entirely — helmet's default blocks microphone=() and camera=()
+  // which would break voice input and image search. Headers are set in vercel.json instead.
+  permissionsPolicy: false,
 }));
 
 // Hide Express fingerprint header

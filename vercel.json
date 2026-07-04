@@ -5,11 +5,10 @@
     {
       "source": "/(.*)",
       "headers": [
-        { "key": "X-Content-Type-Options",    "value": "nosniff" },
-        { "key": "X-Frame-Options",            "value": "DENY" },
-        { "key": "Referrer-Policy",            "value": "strict-origin-when-cross-origin" },
-        { "key": "Permissions-Policy",         "value": "camera=*, microphone=*, geolocation=()" },
-        { "key": "X-XSS-Protection",          "value": "1; mode=block" }
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "X-Frame-Options",        "value": "DENY" },
+        { "key": "Referrer-Policy",        "value": "strict-origin-when-cross-origin" },
+        { "key": "X-XSS-Protection",       "value": "1; mode=block" }
       ]
     }
   ],
@@ -19,18 +18,18 @@
     }
   },
   "rewrites": [
-    { "source": "/chat",        "destination": "/api/index.js" },
-    { "source": "/chat/stream", "destination": "/api/index.js" },
-    { "source": "/chat/image-search", "destination": "/api/index.js" },
-    { "source": "/health",      "destination": "/api/index.js" },
-    { "source": "/warmup",      "destination": "/api/index.js" },
-    { "source": "/debug-mcp",   "destination": "/api/index.js" },
-    { "source": "/chats",       "destination": "/api/index.js" },
-    { "source": "/chats/migrate", "destination": "/api/index.js" },
-    { "source": "/chats/:id",   "destination": "/api/index.js" },
+    { "source": "/chat",                  "destination": "/api/index.js" },
+    { "source": "/chat/stream",           "destination": "/api/index.js" },
+    { "source": "/chat/image-search",     "destination": "/api/index.js" },
+    { "source": "/health",                "destination": "/api/index.js" },
+    { "source": "/warmup",                "destination": "/api/index.js" },
+    { "source": "/debug-mcp",             "destination": "/api/index.js" },
+    { "source": "/chats",                 "destination": "/api/index.js" },
+    { "source": "/chats/migrate",         "destination": "/api/index.js" },
+    { "source": "/chats/:id",             "destination": "/api/index.js" },
     { "source": "/api/speech/synthesize", "destination": "/api/index.js" },
     { "source": "/api/speech/transcribe", "destination": "/api/index.js" },
-    { "source": "/(.*)",        "destination": "/index.html"   }
+    { "source": "/(.*)",                  "destination": "/index.html"   }
   ],
   "crons": [
     {
