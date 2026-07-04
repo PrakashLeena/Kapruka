@@ -8,6 +8,7 @@ dotenv.config({ path: path.resolve(__dirname, ".env") });
 
 import express from "express";
 import cors from "cors";
+import helmet from "helmet";
 import https from "https";
 import http from "http";
 import { MongoClient } from "mongodb";
@@ -22,7 +23,18 @@ import { transcribeSpeech, transcribeSpeechAuto, isAzureSttConfigured } from "./
 
 const PORT = process.env.PORT || 3000;
 const KAPRUKA_MCP_URL = process.env.KAPRUKA_MCP_URL || "https://mcp.kapruka.com/mcp";
-const ALLOWED_ORIGIN = (process.env.ALLOWED_ORIGIN || "http://localhost:5173").replace(/\/$/, "");
+
+// Parse ALLOWED_ORIGIN as a comma-separated list so multiple origins can be
+// configured in a single Vercel env var (e.g. "https://kaprukaai.tech,https://www.kaprukaai.tech")
+const ALLOWED_ORIGINS = new Set(
+  (process.env.ALLOWED_ORIGIN || "http://localhost:5173")
+    .split(",")
+    .map((o) => o.trim().replace(/\/$/, ""))
+    .filter(Boolean)
+);
+// Always allow the two canonical production origins regardless of env var
+ALLOWED_ORIGINS.add("https://kaprukaai.tech");
+ALLOWED_ORIGINS.add("https://www.kaprukaai.tech");
 const MONGODB_URI = process.env.MONGODB_URI;
 
 // Keep-Alive HTTP/HTTPS agents to optimize MCP latency by reusing TCP/TLS connections
@@ -295,6 +307,18 @@ function trimHistory(history) {
 
 // ─── Express ──────────────────────────────────────────────────────────────────
 const app = express();
+
+// Task 4: Security headers via helmet (must be first, before all other middleware)
+app.use(helmet({
+  // CSP is complex to configure for a SPA — disabled here to avoid breaking
+  // inline scripts/styles. Configure explicitly when ready.
+  contentSecurityPolicy: false,
+  crossOriginEmbedderPolicy: false,
+}));
+// Hide Express fingerprint header
+app.disable("x-powered-by");
+
+// Task 5: CORS — explicit allow-list (never reflects arbitrary origins)
 app.use(cors({
   origin: (origin, callback) => {
     if (
@@ -303,19 +327,56 @@ app.use(cors({
       origin.startsWith("http://127.0.0.1:") ||
       origin.startsWith("https://localhost:") ||
       origin.startsWith("https://127.0.0.1:") ||
-      origin === ALLOWED_ORIGIN ||
-      origin === "https://www.kaprukaai.tech" ||
-      origin === "https://kaprukaai.tech"
+      ALLOWED_ORIGINS.has(origin)
     ) {
       callback(null, true);
     } else {
-      console.warn(`CORS blocked request from origin: ${origin}. Allowed origin is: ${ALLOWED_ORIGIN}`);
+      console.warn(`CORS blocked request from origin: ${origin}. Allowed origins: ${[...ALLOWED_ORIGINS].join(", ")}`);
       callback(null, false);
     }
   }
 }));
 
 app.use(express.json({ limit: "2mb" }));
+
+// ─── Task 1: requireAuth middleware ──────────────────────────────────────────
+// Verifies the Firebase ID token from the Authorization: Bearer header.
+// Sets req.uid to the verified Firebase UID on success.
+// Returns 401 for missing, expired, or invalid tokens.
+// Apply to any route that reads private user data.
+async function requireAuth(req, res, next) {
+  const authHeader = req.headers.authorization || "";
+  if (!authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({
+      error: "Authentication required. Provide a valid Firebase ID token in the Authorization: Bearer header.",
+    });
+  }
+
+  const token = authHeader.slice(7).trim();
+  if (!token) {
+    return res.status(401).json({ error: "Bearer token is empty." });
+  }
+
+  const adminAuth = getFirebaseAdminAuthClient();
+  if (!adminAuth) {
+    // Firebase Admin not configured — fail closed (don't trust the request)
+    console.error("[requireAuth] Firebase Admin SDK is not configured. Cannot verify token.");
+    return res.status(503).json({
+      error: "Authentication service unavailable. Set FIREBASE_SERVICE_ACCOUNT_JSON in Vercel env vars.",
+    });
+  }
+
+  try {
+    const decoded = await adminAuth.verifyIdToken(token);
+    req.uid = decoded.uid;
+    return next();
+  } catch (err) {
+    console.warn("[requireAuth] Token verification failed:", err.message);
+    return res.status(401).json({ error: "Invalid or expired Firebase auth token." });
+  }
+}
+
+
 
 // ─── MCP helpers ─────────────────────────────────────────────────────────────
 function mcpPost(baseUrl, payload, sessionId) {
@@ -526,6 +587,45 @@ async function getOpenAiTools() {
   }));
 }
 
+// Sanitizes, normalizes, and injects formatting parameters to MCP tool call arguments safely.
+// Avoids TypeErrors when parameters are represented as JSON strings instead of objects.
+function ensureArgsStructure(toolArgs, toolMeta) {
+  let finalArgs = toolArgs;
+  if (!finalArgs || typeof finalArgs !== "object") {
+    try {
+      finalArgs = typeof finalArgs === "string" ? JSON.parse(finalArgs) : {};
+    } catch {
+      finalArgs = {};
+    }
+  }
+
+  // Wrap flat arguments into a nested 'params' object if needed
+  if (toolMeta?.inputSchema?.required?.includes("params") && !finalArgs.params) {
+    finalArgs = { params: finalArgs };
+  }
+
+  // Guard against params being a JSON string instead of an object
+  if (finalArgs && finalArgs.params && typeof finalArgs.params === "string") {
+    try {
+      finalArgs.params = JSON.parse(finalArgs.params);
+    } catch {
+      // Fallback if parsing fails (e.g. it is a plain text search query)
+      finalArgs.params = { q: finalArgs.params };
+    }
+  }
+
+  // Force 'response_format' to 'json' so we get structured product lists
+  if (finalArgs && typeof finalArgs === "object") {
+    if (finalArgs.params && typeof finalArgs.params === "object") {
+      finalArgs.params.response_format = "json";
+    } else {
+      finalArgs.response_format = "json";
+    }
+  }
+
+  return finalArgs;
+}
+
 // Process and extract product/order data from tool call response
 function processToolResponse(toolName, responseData, products, orderRef) {
   if (!responseData) return;
@@ -672,19 +772,11 @@ app.get("/debug-mcp", async (req, res) => {
 /**
  * GET /chats
  * Returns a list of all chat sessions (id, title, createdAt, messageCount)
+ * Requires a valid Firebase ID token (Authorization: Bearer <token>).
  */
-app.get("/chats", async (req, res) => {
+app.get("/chats", requireAuth, async (req, res) => {
   try {
-    const { userId: queryUserId } = req.query;
-    let userId;
-    try {
-      userId = await resolveRequestUserId(req, queryUserId);
-    } catch (err) {
-      return res.status(err.statusCode || 401).json({ error: err.message });
-    }
-    if (!userId) {
-      return res.status(400).json({ error: "userId query parameter is required." });
-    }
+    const userId = req.uid; // set by requireAuth — always a verified Firebase UID
     const col = getChatCollection();
     if (!col) {
       // Return in-memory sessions as fallback, filtered by user
@@ -723,20 +815,12 @@ app.get("/chats", async (req, res) => {
 /**
  * GET /chats/:id
  * Returns full message history for a single chat session
+ * Requires a valid Firebase ID token.
  */
-app.get("/chats/:id", async (req, res) => {
+app.get("/chats/:id", requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
-    const { userId: queryUserId } = req.query;
-    let userId;
-    try {
-      userId = await resolveRequestUserId(req, queryUserId);
-    } catch (err) {
-      return res.status(err.statusCode || 401).json({ error: err.message });
-    }
-    if (!userId) {
-      return res.status(400).json({ error: "userId query parameter is required." });
-    }
+    const userId = req.uid; // verified by requireAuth
     const col = getChatCollection();
     if (!col) {
       const memKey = `${userId}:${id}`;
@@ -755,20 +839,12 @@ app.get("/chats/:id", async (req, res) => {
 /**
  * DELETE /chats/:id
  * Permanently deletes a chat session from the database
+ * Requires a valid Firebase ID token.
  */
-app.delete("/chats/:id", async (req, res) => {
+app.delete("/chats/:id", requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
-    const { userId: queryUserId } = req.query;
-    let userId;
-    try {
-      userId = await resolveRequestUserId(req, queryUserId);
-    } catch (err) {
-      return res.status(err.statusCode || 401).json({ error: err.message });
-    }
-    if (!userId) {
-      return res.status(400).json({ error: "userId query parameter is required." });
-    }
+    const userId = req.uid; // verified by requireAuth
     const col = getChatCollection();
     if (!col) {
       const memKey = `${userId}:${id}`;
@@ -789,22 +865,15 @@ app.delete("/chats/:id", async (req, res) => {
 /**
  * POST /chats/migrate
  * Migrates guest chat sessions to the logged-in user's account in MongoDB
+ * Requires a valid Firebase ID token.
  */
-app.post("/chats/migrate", async (req, res) => {
+app.post("/chats/migrate", requireAuth, async (req, res) => {
   try {
     const { guestId } = req.body;
     if (!guestId) {
       return res.status(400).json({ error: "guestId is required." });
     }
-    let userId;
-    try {
-      userId = await resolveRequestUserId(req, null);
-    } catch (err) {
-      return res.status(err.statusCode || 401).json({ error: err.message });
-    }
-    if (!userId) {
-      return res.status(401).json({ error: "A verified Firebase user is required to migrate chats." });
-    }
+    const userId = req.uid; // verified by requireAuth
     const col = getChatCollection();
     if (col) {
       // Update all chat sessions belonging to guestId to userId
@@ -909,19 +978,9 @@ app.post("/chat", async (req, res) => {
 
           console.log(`Executing tool ${toolName} in parallel with args:`, toolArgs);
           
-          // Wrap flat arguments into a nested 'params' object if needed
-          let finalArgs = toolArgs;
+          // Prepare and sanitize arguments using our helper function
           const toolMeta = mcpTools.find(t => t.name === toolName);
-          if (toolMeta?.inputSchema?.required?.includes("params") && !toolArgs.params) {
-            finalArgs = { params: toolArgs };
-          }
-          
-          // Force 'response_format' to 'json' so we get structured product lists
-          if (finalArgs.params) {
-            finalArgs.params.response_format = "json";
-          } else {
-            finalArgs.response_format = "json";
-          }
+          const finalArgs = ensureArgsStructure(toolArgs, toolMeta);
 
           let toolResult;
           try {
@@ -1222,19 +1281,9 @@ app.post("/chat/stream", async (req, res) => {
 
           console.log(`[stream] Executing tool ${toolName} with args:`, toolArgs);
 
-          // Wrap flat args into nested params object if the schema requires it
-          let finalArgs = toolArgs;
+          // Prepare and sanitize arguments using our helper function
           const toolMeta = mcpTools.find((t) => t.name === toolName);
-          if (toolMeta?.inputSchema?.required?.includes("params") && !toolArgs.params) {
-            finalArgs = { params: toolArgs };
-          }
-
-          // Force JSON response format for structured product lists
-          if (finalArgs.params) {
-            finalArgs.params.response_format = "json";
-          } else {
-            finalArgs.response_format = "json";
-          }
+          const finalArgs = ensureArgsStructure(toolArgs, toolMeta);
 
           let toolResult;
           try {
@@ -1475,16 +1524,9 @@ app.post("/chat/image-search", async (req, res) => {
 
           console.log(`[image-search] Tool ${toolName}:`, toolArgs);
 
-          let finalArgs = toolArgs;
+          // Prepare and sanitize arguments using our helper function
           const toolMeta = mcpTools.find((t) => t.name === toolName);
-          if (toolMeta?.inputSchema?.required?.includes("params") && !toolArgs.params) {
-            finalArgs = { params: toolArgs };
-          }
-          if (finalArgs.params) {
-            finalArgs.params.response_format = "json";
-          } else {
-            finalArgs.response_format = "json";
-          }
+          const finalArgs = ensureArgsStructure(toolArgs, toolMeta);
 
           let toolResult;
           try {
