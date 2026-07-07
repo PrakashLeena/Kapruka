@@ -72,33 +72,37 @@ export default function App() {
   // Derive the userId from Firebase user uid, or fall back to guest ID
   const userId = firebaseUser?.uid ?? guestId;
 
-  function buildHeaders(extraHeaders = {}) {
+  function buildHeaders(extraHeaders = {}, explicitToken) {
+    const tok = explicitToken !== undefined ? explicitToken : authToken;
     return {
       ...extraHeaders,
-      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+      ...(tok ? { Authorization: `Bearer ${tok}` } : {}),
     };
   }
 
   // Fetch chat sessions filtered by current user's Firebase uid
-  async function fetchChats(targetUserId = userId, selectLatest = false) {
+  // explicitToken: optional — pass the fresh token directly to avoid stale authToken state
+  async function fetchChats(targetUserId = userId, selectLatest = false, explicitToken) {
     if (!targetUserId) {
       setChats([]);
       return;
     }
     try {
       const res = await fetch(`${BACKEND_URL}/chats?userId=${encodeURIComponent(targetUserId)}`, {
-        headers: buildHeaders(),
+        headers: buildHeaders({}, explicitToken),
       });
       if (res.ok) {
         const data = await res.json();
         setChats(data);
         if (selectLatest && data.length > 0) {
           // Select the most recent chat session
-          await selectChat(data[0].id, targetUserId);
+          await selectChat(data[0].id, targetUserId, explicitToken);
         } else if (selectLatest) {
           // If no previous chats, start a new one
           handleNewChat();
         }
+      } else {
+        console.error("Failed to fetch chats, status:", res.status, await res.text().catch(() => ""));
       }
     } catch (err) {
       console.error("Failed to fetch chat history list:", err);
@@ -114,8 +118,9 @@ export default function App() {
     handleNewChat();
 
     if (firebaseUser) {
-      // Logged-in user — load persisted history from backend
-      fetchChats(firebaseUser.uid, true);
+      // Logged-in user — load persisted history from backend.
+      // Pass authToken directly so we don't depend on the React state update having settled.
+      fetchChats(firebaseUser.uid, true, authToken);
     }
     // Guest (firebaseUser === null): nothing to fetch, chat lives in React state only
   }, [firebaseUser]);
@@ -125,13 +130,14 @@ export default function App() {
   }, [messages, loading]);
 
   // Load a selected chat session
-  async function selectChat(chatId, targetUserId = userId) {
+  // explicitToken: optional — pass the fresh token directly to avoid stale authToken state
+  async function selectChat(chatId, targetUserId = userId, explicitToken) {
     if (!targetUserId) return;
     setActiveChatId(chatId);
     setLoading(true);
     try {
       const res = await fetch(`${BACKEND_URL}/chats/${chatId}?userId=${encodeURIComponent(targetUserId)}`, {
-        headers: buildHeaders(),
+        headers: buildHeaders({}, explicitToken),
       });
       if (!res.ok) throw new Error("Failed to load chat history");
       const data = await res.json();
