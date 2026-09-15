@@ -151,12 +151,16 @@ function stripToolCallMarkup(text, isFinal = false) {
 }
 
 const _providerStatus = getProviderStatus();
-if (!_providerStatus.tgi && !_providerStatus.openai) {
-  console.warn("WARNING: No LLM provider configured. Set TGI_ENDPOINT_URL or OPENAI_API_KEY.");
-} else if (!_providerStatus.tgi) {
-  console.log("\u2139\uFE0F  Primary: OpenAI GPT-4o (TGI_ENDPOINT_URL not set — fine-tuned model not active).");
+if (_providerStatus.gemini) {
+  console.log("✅ Primary LLM: Google Gemini (gemini-3.6-flash)");
+} else if (_providerStatus.tgi) {
+  console.log("✅ Primary LLM: TGI (fine-tuned Qwen3-14B)");
+} else if (_providerStatus.openai) {
+  console.log("ℹ️  Primary LLM: OpenAI GPT-4o");
+} else if (_providerStatus.qwen35) {
+  console.log("ℹ️  Primary LLM: NVIDIA Qwen 3.5");
 } else {
-  console.log("\u2705 Primary: TGI (fine-tuned Qwen3-14B) | Fallback: OpenAI GPT-4o");
+  console.warn("WARNING: No LLM provider configured. Set GEMINI_API_KEY, TGI_ENDPOINT_URL, or OPENAI_API_KEY.");
 }
 if (!MONGODB_URI) {
   console.warn("WARNING: MONGODB_URI is not set. Chat history will not persist.");
@@ -914,9 +918,9 @@ app.post("/chats/migrate", requireAuth, async (req, res) => {
 
 // ─── Main Chat Endpoint ───────────────────────────────────────────────────────
 app.post("/chat", async (req, res) => {
-  const { tgi: _chatTgi, openai: _chatOpenai } = getProviderStatus();
-  if (!_chatTgi && !_chatOpenai) {
-    return res.status(500).json({ error: "No LLM provider configured on the server (set TGI_ENDPOINT_URL or OPENAI_API_KEY)." });
+  const { gemini: _chatGemini, tgi: _chatTgi, openai: _chatOpenai, qwen35: _chatQwen } = getProviderStatus();
+  if (!_chatGemini && !_chatTgi && !_chatOpenai && !_chatQwen) {
+    return res.status(500).json({ error: "No LLM provider configured on the server (set GEMINI_API_KEY, TGI_ENDPOINT_URL, or OPENAI_API_KEY)." });
   }
 
   const { sessionId, message, userId: bodyUserId } = req.body ?? {};
@@ -1104,9 +1108,9 @@ async function* streamLLMCall(messages, tools) {
  *   { type: "error",    message: "..." } — fatal error
  */
 app.post("/chat/stream", async (req, res) => {
-  const { tgi: _streamTgi, openai: _streamOpenai } = getProviderStatus();
-  if (!_streamTgi && !_streamOpenai) {
-    return res.status(500).json({ error: "No LLM provider configured on the server (set TGI_ENDPOINT_URL or OPENAI_API_KEY)." });
+  const { gemini: _streamGemini, tgi: _streamTgi, openai: _streamOpenai, qwen35: _streamQwen } = getProviderStatus();
+  if (!_streamGemini && !_streamTgi && !_streamOpenai && !_streamQwen) {
+    return res.status(500).json({ error: "No LLM provider configured on the server (set GEMINI_API_KEY, TGI_ENDPOINT_URL, or OPENAI_API_KEY)." });
   }
 
   // ── SSE headers ────────────────────────────────────────────────────────────
@@ -1361,11 +1365,11 @@ app.post("/chat/stream", async (req, res) => {
  * SSE events: delta | products | done | error  (same schema as /chat/stream)
  */
 app.post("/chat/image-search", async (req, res) => {
-  // Image analysis uses GPT-4o Vision (primary) or Gemini Vision (fallback).
+  // Image analysis uses Gemini Vision (primary) or GPT-4o Vision (fallback).
   // At least one must be configured.
-  const { openai: _imgOpenai, gemini: _imgGemini } = getProviderStatus();
-  if (!_imgOpenai && !_imgGemini) {
-    return res.status(500).json({ error: "No image analysis provider configured (set OPENAI_API_KEY or GEMINI_API_KEY)." });
+  const { gemini: _imgGemini, openai: _imgOpenai } = getProviderStatus();
+  if (!_imgGemini && !_imgOpenai) {
+    return res.status(500).json({ error: "No image analysis provider configured (set GEMINI_API_KEY or OPENAI_API_KEY)." });
   }
 
   // ── SSE headers ────────────────────────────────────────────────────────────
