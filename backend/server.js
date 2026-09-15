@@ -1045,7 +1045,8 @@ app.post("/chat", async (req, res) => {
   } catch (err) {
     console.error("Unexpected error in /chat:", err);
     history.pop();
-    res.status(500).json({ error: "Something went wrong on our end." });
+    const errMsg = err.message || "Something went wrong on our end.";
+    res.status(500).json({ error: errMsg });
   }
 });
 
@@ -1349,7 +1350,8 @@ app.post("/chat/stream", async (req, res) => {
   } catch (err) {
     console.error("Unexpected error in /chat/stream:", err);
     history.pop();
-    emit({ type: "error", message: "Something went wrong on our end." });
+    const errMsg = err.message || "Something went wrong on our end.";
+    emit({ type: "error", message: errMsg });
     res.end();
   }
 });
