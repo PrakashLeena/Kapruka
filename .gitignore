@@ -16,6 +16,8 @@ out/
 **/.env
 **/.env.*
 backend/.env
+!.env.example
+!**/.env.example
 .env.local
 .env.development.local
 .env.test.local
