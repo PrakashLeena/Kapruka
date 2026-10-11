@@ -22,6 +22,16 @@ dotenv.config({ path: path.resolve(__dirname, ".env") });
 const GEMINI_API_KEY   = process.env.GEMINI_API_KEY || "";
 const GEMINI_MODEL     = process.env.GEMINI_MODEL || "gemini-3.5-flash-lite";
 
+// Fallback Gemini models in order of preference if the selected model encounters 429 quota or 503 spike
+const GEMINI_FALLBACK_MODELS = Array.from(new Set([
+  GEMINI_MODEL,
+  "gemini-3.5-flash-lite",
+  "gemini-3.8-flash",
+  "gemini-3.7-flash",
+  "gemini-flash-lite-latest",
+  "gemini-flash-latest",
+])).filter(Boolean);
+
 const TGI_ENDPOINT_URL = process.env.TGI_ENDPOINT_URL?.replace(/\/$/, "") || "";
 const TGI_API_KEY      = process.env.TGI_API_KEY || "";
 const TGI_MODEL        = process.env.TGI_MODEL || "tgi";
@@ -36,7 +46,7 @@ if (TGI_ENDPOINT_URL.includes("integrate.api.nvidia.com") && TGI_MODEL === "tgi"
   console.warn(
     "[aiRouter] ⚠️  TGI_ENDPOINT_URL points to NVIDIA NIM but TGI_MODEL is still 'tgi'. " +
     "NVIDIA NIM will reject this with a 400 error. " +
-    "Set TGI_MODEL=qwen/qwen3.5-397b-a17b (or your chosen NIM model slug) in Vercel env vars."
+    "Set TGI_MODEL in env vars if using NVIDIA NIM."
   );
 }
 
@@ -56,9 +66,9 @@ const IMAGE_TIMEOUT_MS       = 20_000;
 export function getProviderStatus() {
   return {
     gemini: !!GEMINI_API_KEY,
-    tgi:    !!TGI_ENDPOINT_URL,
+    tgi:    !!(TGI_ENDPOINT_URL && !TGI_ENDPOINT_URL.includes("integrate.api.nvidia.com")),
     openai: !!OPENAI_API_KEY,
-    qwen35: !!NVIDIA_QWEN_KEY,
+    qwen35: false, // qwen/qwen3.5-397b-a17b is EOL (reached end-of-life on 2026-07-27)
   };
 }
 
@@ -68,7 +78,7 @@ export function getProviderStatus() {
  * Helper to fetch with retries on HTTP 429 and 503 using exponential backoff.
  * Also handles transient fetch failures/timeouts.
  */
-async function fetchWithRetry(url, options, maxRetries = 3, baseDelayMs = 1000) {
+async function fetchWithRetry(url, options, maxRetries = 1, baseDelayMs = 600) {
   let attempt = 0;
   while (true) {
     try {
@@ -101,9 +111,9 @@ async function fetchWithRetry(url, options, maxRetries = 3, baseDelayMs = 1000) 
  * @param {boolean} stream
  * @returns {Promise<Response>}
  */
-async function _fetchGemini(messages, tools, stream) {
+async function _fetchGemini(messages, tools, stream, modelName = GEMINI_MODEL) {
   const body = {
-    model: GEMINI_MODEL,
+    model: modelName,
     messages,
     temperature: 0.2,
     top_p: 0.95,
@@ -225,19 +235,21 @@ async function _fetchNvidiaQwen(messages, tools, stream) {
 export async function callPrimaryStream(messages, tools) {
   let lastErrorMsg = "";
 
-  // ── Tier 1: Google Gemini (Main Provider) ──────────────────────────────────
+  // ── Tier 1: Google Gemini (Primary with Automatic Model Fallback) ─────────
   if (GEMINI_API_KEY) {
-    try {
-      console.log(`[aiRouter] → stream | provider: Google Gemini (${GEMINI_MODEL})`);
-      const res = await _fetchGemini(messages, tools, true);
-      if (res.ok) return { response: res, provider: "gemini" };
+    for (const model of GEMINI_FALLBACK_MODELS) {
+      try {
+        console.log(`[aiRouter] → stream | provider: Google Gemini (${model})`);
+        const res = await _fetchGemini(messages, tools, true, model);
+        if (res.ok) return { response: res, provider: `gemini (${model})` };
 
-      const errText = await res.text();
-      lastErrorMsg = `Gemini ${res.status}: ${errText.slice(0, 200)}`;
-      console.warn(`[aiRouter] ${lastErrorMsg} — falling back`);
-    } catch (err) {
-      lastErrorMsg = `Gemini error: ${err.message}`;
-      console.warn(`[aiRouter] ${lastErrorMsg} — falling back`);
+        const errText = await res.text();
+        lastErrorMsg = `Gemini (${model}) ${res.status}: ${errText.slice(0, 200)}`;
+        console.warn(`[aiRouter] ${lastErrorMsg} — trying next candidate`);
+      } catch (err) {
+        lastErrorMsg = `Gemini (${model}) error: ${err.message}`;
+        console.warn(`[aiRouter] ${lastErrorMsg} — trying next candidate`);
+      }
     }
   }
 
@@ -266,28 +278,14 @@ export async function callPrimaryStream(messages, tools) {
 
       const errText = await res.text();
       lastErrorMsg = `OpenAI ${res.status}: ${errText.slice(0, 200)}`;
-      console.warn(`[aiRouter] ${lastErrorMsg} — falling back to NVIDIA Qwen 3.5`);
+      console.warn(`[aiRouter] ${lastErrorMsg} — falling back`);
     } catch (err) {
       lastErrorMsg = `OpenAI error: ${err.message}`;
-      console.warn(`[aiRouter] ${lastErrorMsg} — falling back to NVIDIA Qwen 3.5`);
+      console.warn(`[aiRouter] ${lastErrorMsg} — falling back`);
     }
   }
 
-  // ── Tier 4: NVIDIA Qwen 3.5 ─────────────────────────────────────────────
-  if (NVIDIA_QWEN_KEY) {
-    try {
-      console.log("[aiRouter] → stream | provider: NVIDIA Qwen 3.5 (fallback)");
-      const res = await _fetchNvidiaQwen(messages, tools, true);
-      if (res.ok) return { response: res, provider: "qwen35" };
-
-      const errText = await res.text();
-      throw new Error(`NVIDIA Qwen ${res.status}: ${errText.slice(0, 300)}`);
-    } catch (err) {
-      throw new Error(`[aiRouter] All stream providers failed. Last: ${err.message}`);
-    }
-  }
-
-  throw new Error(`[aiRouter] No streaming LLM provider configured or succeeded. (Tried Gemini, TGI, OpenAI, Qwen). Last error: ${lastErrorMsg}`);
+  throw new Error(`[aiRouter] All stream providers failed. Last: ${lastErrorMsg}`);
 }
 
 // ─── Public: non-streaming call ───────────────────────────────────────────────
@@ -296,7 +294,7 @@ export async function callPrimaryStream(messages, tools) {
  * Returns parsed JSON data from the best available LLM provider (no streaming).
  * Used by the POST /chat (non-SSE) endpoint.
  *
- * Route: Google Gemini (Primary) → TGI → OpenAI GPT-4o → NVIDIA Qwen 3.5
+ * Route: Google Gemini (Primary) → TGI → OpenAI GPT-4o
  *
  * @param {object[]} messages
  * @param {object[]|undefined} tools
@@ -306,21 +304,23 @@ export async function callPrimaryStream(messages, tools) {
 export async function callPrimaryNonStream(messages, tools) {
   let lastErrorMsg = "";
 
-  // ── Tier 1: Google Gemini (Main Provider) ──────────────────────────────────
+  // ── Tier 1: Google Gemini (Primary with Automatic Model Fallback) ─────────
   if (GEMINI_API_KEY) {
-    try {
-      console.log(`[aiRouter] → non-stream | provider: Google Gemini (${GEMINI_MODEL})`);
-      const res = await _fetchGemini(messages, tools, false);
-      if (res.ok) {
-        const data = await res.json();
-        return { data, provider: "gemini" };
+    for (const model of GEMINI_FALLBACK_MODELS) {
+      try {
+        console.log(`[aiRouter] → non-stream | provider: Google Gemini (${model})`);
+        const res = await _fetchGemini(messages, tools, false, model);
+        if (res.ok) {
+          const data = await res.json();
+          return { data, provider: `gemini (${model})` };
+        }
+        const errText = await res.text();
+        lastErrorMsg = `Gemini (${model}) ${res.status}: ${errText.slice(0, 200)}`;
+        console.warn(`[aiRouter] ${lastErrorMsg} — trying next candidate`);
+      } catch (err) {
+        lastErrorMsg = `Gemini (${model}) non-stream error: ${err.message}`;
+        console.warn(`[aiRouter] ${lastErrorMsg} — trying next candidate`);
       }
-      const errText = await res.text();
-      lastErrorMsg = `Gemini ${res.status}: ${errText.slice(0, 200)}`;
-      console.warn(`[aiRouter] ${lastErrorMsg} — falling back`);
-    } catch (err) {
-      lastErrorMsg = `Gemini non-stream error: ${err.message}`;
-      console.warn(`[aiRouter] ${lastErrorMsg} — falling back`);
     }
   }
 
@@ -353,26 +353,10 @@ export async function callPrimaryNonStream(messages, tools) {
       }
       const errText = await res.text();
       lastErrorMsg = `OpenAI ${res.status}: ${errText.slice(0, 200)}`;
-      console.warn(`[aiRouter] ${lastErrorMsg} — falling back to NVIDIA Qwen 3.5`);
+      console.warn(`[aiRouter] ${lastErrorMsg} — falling back`);
     } catch (err) {
       lastErrorMsg = `OpenAI non-stream error: ${err.message}`;
-      console.warn(`[aiRouter] ${lastErrorMsg} — falling back to NVIDIA Qwen 3.5`);
-    }
-  }
-
-  // ── Tier 4: NVIDIA Qwen 3.5 ─────────────────────────────────────────────
-  if (NVIDIA_QWEN_KEY) {
-    try {
-      console.log("[aiRouter] → non-stream | provider: NVIDIA Qwen 3.5 (fallback)");
-      const res = await _fetchNvidiaQwen(messages, tools, false);
-      if (res.ok) {
-        const data = await res.json();
-        return { data, provider: "qwen35" };
-      }
-      const errText = await res.text();
-      throw new Error(`NVIDIA Qwen ${res.status}: ${errText.slice(0, 300)}`);
-    } catch (err) {
-      throw new Error(`[aiRouter] All non-stream providers failed. Last: ${err.message}`);
+      console.warn(`[aiRouter] ${lastErrorMsg} — falling back`);
     }
   }
 
@@ -398,39 +382,41 @@ Focus on: product type, key features, brand if visible, color/style if distincti
 Reply with ONLY the search query — no explanation, no punctuation at the end.
 Examples: "dark chocolate gift box", "birthday cake chocolate", "silk saree blue".`;
 
-  // ── Tier 1: Gemini Vision (Primary) ──────────────────────────────────────
+  // ── Tier 1: Gemini Vision (Primary with Automatic Model Fallback) ───────
   if (GEMINI_API_KEY) {
-    try {
-      console.log(`[aiRouter] → image | provider: Gemini Vision (${GEMINI_MODEL})`);
-      const res = await fetchWithRetry(
-        `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [{
-              parts: [
-                { inline_data: { mime_type: mimeType, data: imageBase64 } },
-                { text: prompt },
-              ],
-            }],
-            generationConfig: { temperature: 0.1, maxOutputTokens: 64 },
-          }),
-          signal: AbortSignal.timeout(IMAGE_TIMEOUT_MS),
-        }
-      );
+    for (const model of GEMINI_FALLBACK_MODELS) {
+      try {
+        console.log(`[aiRouter] → image | provider: Gemini Vision (${model})`);
+        const res = await fetchWithRetry(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [{
+                parts: [
+                  { inline_data: { mime_type: mimeType, data: imageBase64 } },
+                  { text: prompt },
+                ],
+              }],
+              generationConfig: { temperature: 0.1, maxOutputTokens: 64 },
+            }),
+            signal: AbortSignal.timeout(IMAGE_TIMEOUT_MS),
+          }
+        );
 
-      if (res.ok) {
-        const data = await res.json();
-        const query = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-        if (query) return { query, provider: "gemini" };
-        console.warn("[aiRouter] Gemini Vision returned empty query — falling back");
-      } else {
-        const errText = await res.text();
-        console.warn(`[aiRouter] Gemini Vision ${res.status} — falling back. Body: ${errText.slice(0, 200)}`);
+        if (res.ok) {
+          const data = await res.json();
+          const query = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+          if (query) return { query, provider: `gemini (${model})` };
+          console.warn(`[aiRouter] Gemini Vision (${model}) returned empty query — trying next candidate`);
+        } else {
+          const errText = await res.text();
+          console.warn(`[aiRouter] Gemini Vision (${model}) ${res.status} — trying next candidate. Body: ${errText.slice(0, 200)}`);
+        }
+      } catch (err) {
+        console.warn(`[aiRouter] Gemini Vision (${model}) error: ${err.message} — trying next candidate`);
       }
-    } catch (err) {
-      console.warn(`[aiRouter] Gemini Vision error: ${err.message} — falling back`);
     }
   }
 

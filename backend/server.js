@@ -152,7 +152,7 @@ function stripToolCallMarkup(text, isFinal = false) {
 
 const _providerStatus = getProviderStatus();
 if (_providerStatus.gemini) {
-  console.log("✅ Primary LLM: Google Gemini (gemini-3.6-flash)");
+  console.log(`✅ Primary LLM: Google Gemini (${process.env.GEMINI_MODEL || "gemini-3.5-flash-lite"})`);
 } else if (_providerStatus.tgi) {
   console.log("✅ Primary LLM: TGI (fine-tuned Qwen3-14B)");
 } else if (_providerStatus.openai) {
