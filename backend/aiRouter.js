@@ -3,7 +3,7 @@
 // Central AI client factory and routing layer for the Kapruka Agent backend.
 //
 // Request routing priority (highest → lowest):
-//   1. Google Gemini (gemini-3.6-flash) — Primary LLM for chat completions,
+//   1. Google Gemini (gemini-2.5-flash) — Primary LLM for chat completions,
 //             streaming, tool calling, and image analysis (set GEMINI_API_KEY)
 //   2. TGI — fine-tuned Qwen3-14B LoRA served via Hugging Face TGI
 //             (set TGI_ENDPOINT_URL + optionally TGI_API_KEY)
@@ -20,7 +20,7 @@ dotenv.config({ path: path.resolve(__dirname, ".env") });
 
 // ─── Provider config ─────────────────────────────────────────────────────────
 const GEMINI_API_KEY   = process.env.GEMINI_API_KEY || "";
-const GEMINI_MODEL     = process.env.GEMINI_MODEL || "gemini-3.5-flash";
+const GEMINI_MODEL     = process.env.GEMINI_MODEL || "gemini-3.5-flash-lite";
 
 const TGI_ENDPOINT_URL = process.env.TGI_ENDPOINT_URL?.replace(/\/$/, "") || "";
 const TGI_API_KEY      = process.env.TGI_API_KEY || "";
