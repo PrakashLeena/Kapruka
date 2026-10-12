@@ -1171,6 +1171,7 @@ app.post("/chat/stream", async (req, res) => {
     for (let loop = 0; loop < 10; loop++) {
       // Accumulate the full response from the streamed chunks
       let fullContent = "";
+      let messageExtraContent = null;
       const toolCallsMap = {}; // index → partial tool call object
       let hasToolCalls = false;
 
@@ -1189,6 +1190,9 @@ app.post("/chat/stream", async (req, res) => {
       for await (const chunk of streamLLMCall(currentMessages, openAiTools)) {
         const delta = chunk.choices?.[0]?.delta;
         if (!delta) continue;
+
+        if (delta.extra_content) messageExtraContent = delta.extra_content;
+        if (chunk.choices?.[0]?.extra_content) messageExtraContent = chunk.choices[0].extra_content;
 
         // ── Text delta: buffer around potential <tool_call> blocks ────────
         if (delta.content) {
@@ -1228,7 +1232,7 @@ app.post("/chat/stream", async (req, res) => {
         if (delta.tool_calls) {
           hasToolCalls = true;
           for (const tc of delta.tool_calls) {
-            const idx = tc.index;
+            const idx = tc.index ?? 0;
             if (!toolCallsMap[idx]) {
               toolCallsMap[idx] = {
                 id: tc.id || "",
@@ -1239,6 +1243,7 @@ app.post("/chat/stream", async (req, res) => {
             if (tc.id) toolCallsMap[idx].id = tc.id;
             if (tc.function?.name) toolCallsMap[idx].function.name += tc.function.name;
             if (tc.function?.arguments) toolCallsMap[idx].function.arguments += tc.function.arguments;
+            if (tc.extra_content) toolCallsMap[idx].extra_content = tc.extra_content;
           }
         }
       }
@@ -1281,6 +1286,9 @@ app.post("/chat/stream", async (req, res) => {
 
       // Build and append the assistant message for this turn
       const assistantMessage = { role: "assistant", content: fullContent || null };
+      if (messageExtraContent) {
+        assistantMessage.extra_content = messageExtraContent;
+      }
       if (hasToolCalls && toolCalls.length > 0) {
         assistantMessage.tool_calls = toolCalls;
       }
@@ -1455,6 +1463,7 @@ app.post("/chat/image-search", async (req, res) => {
 
     for (let loop = 0; loop < 10; loop++) {
       let fullContent = "";
+      let messageExtraContent = null;
       const toolCallsMap = {};
       let hasToolCalls = false;
       let holdBuf = "";
@@ -1469,6 +1478,9 @@ app.post("/chat/image-search", async (req, res) => {
       for await (const chunk of streamLLMCall(currentMessages, openAiTools)) {
         const delta = chunk.choices?.[0]?.delta;
         if (!delta) continue;
+
+        if (delta.extra_content) messageExtraContent = delta.extra_content;
+        if (chunk.choices?.[0]?.extra_content) messageExtraContent = chunk.choices[0].extra_content;
 
         if (delta.content) {
           fullContent += delta.content;
@@ -1492,13 +1504,14 @@ app.post("/chat/image-search", async (req, res) => {
         if (delta.tool_calls) {
           hasToolCalls = true;
           for (const tc of delta.tool_calls) {
-            const idx = tc.index;
+            const idx = tc.index ?? 0;
             if (!toolCallsMap[idx]) {
               toolCallsMap[idx] = { id: tc.id || "", type: "function", function: { name: "", arguments: "" } };
             }
             if (tc.id) toolCallsMap[idx].id = tc.id;
             if (tc.function?.name) toolCallsMap[idx].function.name += tc.function.name;
             if (tc.function?.arguments) toolCallsMap[idx].function.arguments += tc.function.arguments;
+            if (tc.extra_content) toolCallsMap[idx].extra_content = tc.extra_content;
           }
         }
       }
@@ -1532,6 +1545,7 @@ app.post("/chat/image-search", async (req, res) => {
       }
 
       const assistantMessage = { role: "assistant", content: fullContent || null };
+      if (messageExtraContent) assistantMessage.extra_content = messageExtraContent;
       if (hasToolCalls && toolCalls.length > 0) assistantMessage.tool_calls = toolCalls;
       currentMessages.push(assistantMessage);
 

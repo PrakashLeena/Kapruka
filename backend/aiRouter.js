@@ -233,7 +233,7 @@ async function _fetchNvidiaQwen(messages, tools, stream) {
  * @throws if all configured providers fail
  */
 export async function callPrimaryStream(messages, tools) {
-  let lastErrorMsg = "";
+  const providerErrors = [];
 
   // ── Tier 1: Google Gemini (Primary with Automatic Model Fallback) ─────────
   if (GEMINI_API_KEY) {
@@ -244,13 +244,17 @@ export async function callPrimaryStream(messages, tools) {
         if (res.ok) return { response: res, provider: `gemini (${model})` };
 
         const errText = await res.text();
-        lastErrorMsg = `Gemini (${model}) ${res.status}: ${errText.slice(0, 200)}`;
-        console.warn(`[aiRouter] ${lastErrorMsg} — trying next candidate`);
+        const msg = `Gemini (${model}) ${res.status}: ${errText.slice(0, 200)}`;
+        providerErrors.push(msg);
+        console.warn(`[aiRouter] ${msg} — trying next candidate`);
       } catch (err) {
-        lastErrorMsg = `Gemini (${model}) error: ${err.message}`;
-        console.warn(`[aiRouter] ${lastErrorMsg} — trying next candidate`);
+        const msg = `Gemini (${model}) error: ${err.message}`;
+        providerErrors.push(msg);
+        console.warn(`[aiRouter] ${msg} — trying next candidate`);
       }
     }
+  } else {
+    providerErrors.push("Gemini skipped: GEMINI_API_KEY is not configured");
   }
 
   // ── Tier 2: TGI (fine-tuned Qwen3-14B) ──────────────────────────────────
@@ -261,11 +265,13 @@ export async function callPrimaryStream(messages, tools) {
       if (res.ok) return { response: res, provider: "tgi" };
 
       const errText = await res.text();
-      lastErrorMsg = `TGI ${res.status}: ${errText.slice(0, 200)}`;
-      console.warn(`[aiRouter] ${lastErrorMsg} — falling back`);
+      const msg = `TGI ${res.status}: ${errText.slice(0, 200)}`;
+      providerErrors.push(msg);
+      console.warn(`[aiRouter] ${msg} — falling back`);
     } catch (err) {
-      lastErrorMsg = `TGI error: ${err.message}`;
-      console.warn(`[aiRouter] ${lastErrorMsg} — falling back`);
+      const msg = `TGI error: ${err.message}`;
+      providerErrors.push(msg);
+      console.warn(`[aiRouter] ${msg} — falling back`);
     }
   }
 
@@ -277,15 +283,17 @@ export async function callPrimaryStream(messages, tools) {
       if (res.ok) return { response: res, provider: "openai" };
 
       const errText = await res.text();
-      lastErrorMsg = `OpenAI ${res.status}: ${errText.slice(0, 200)}`;
-      console.warn(`[aiRouter] ${lastErrorMsg} — falling back`);
+      const msg = `OpenAI ${res.status}: ${errText.slice(0, 200)}`;
+      providerErrors.push(msg);
+      console.warn(`[aiRouter] ${msg} — falling back`);
     } catch (err) {
-      lastErrorMsg = `OpenAI error: ${err.message}`;
-      console.warn(`[aiRouter] ${lastErrorMsg} — falling back`);
+      const msg = `OpenAI error: ${err.message}`;
+      providerErrors.push(msg);
+      console.warn(`[aiRouter] ${msg} — falling back`);
     }
   }
 
-  throw new Error(`[aiRouter] All stream providers failed. Last: ${lastErrorMsg}`);
+  throw new Error(`[aiRouter] All stream providers failed. Details: ${providerErrors.join(" | ")}`);
 }
 
 // ─── Public: non-streaming call ───────────────────────────────────────────────
@@ -302,7 +310,7 @@ export async function callPrimaryStream(messages, tools) {
  * @throws if all configured providers fail
  */
 export async function callPrimaryNonStream(messages, tools) {
-  let lastErrorMsg = "";
+  const providerErrors = [];
 
   // ── Tier 1: Google Gemini (Primary with Automatic Model Fallback) ─────────
   if (GEMINI_API_KEY) {
@@ -315,13 +323,17 @@ export async function callPrimaryNonStream(messages, tools) {
           return { data, provider: `gemini (${model})` };
         }
         const errText = await res.text();
-        lastErrorMsg = `Gemini (${model}) ${res.status}: ${errText.slice(0, 200)}`;
-        console.warn(`[aiRouter] ${lastErrorMsg} — trying next candidate`);
+        const msg = `Gemini (${model}) ${res.status}: ${errText.slice(0, 200)}`;
+        providerErrors.push(msg);
+        console.warn(`[aiRouter] ${msg} — trying next candidate`);
       } catch (err) {
-        lastErrorMsg = `Gemini (${model}) non-stream error: ${err.message}`;
-        console.warn(`[aiRouter] ${lastErrorMsg} — trying next candidate`);
+        const msg = `Gemini (${model}) non-stream error: ${err.message}`;
+        providerErrors.push(msg);
+        console.warn(`[aiRouter] ${msg} — trying next candidate`);
       }
     }
+  } else {
+    providerErrors.push("Gemini skipped: GEMINI_API_KEY is not configured");
   }
 
   // ── Tier 2: TGI ──────────────────────────────────────────────────────────
@@ -334,11 +346,13 @@ export async function callPrimaryNonStream(messages, tools) {
         return { data, provider: "tgi" };
       }
       const errText = await res.text();
-      lastErrorMsg = `TGI ${res.status}: ${errText.slice(0, 200)}`;
-      console.warn(`[aiRouter] ${lastErrorMsg} — falling back`);
+      const msg = `TGI ${res.status}: ${errText.slice(0, 200)}`;
+      providerErrors.push(msg);
+      console.warn(`[aiRouter] ${msg} — falling back`);
     } catch (err) {
-      lastErrorMsg = `TGI non-stream error: ${err.message}`;
-      console.warn(`[aiRouter] ${lastErrorMsg} — falling back`);
+      const msg = `TGI non-stream error: ${err.message}`;
+      providerErrors.push(msg);
+      console.warn(`[aiRouter] ${msg} — falling back`);
     }
   }
 
@@ -352,15 +366,17 @@ export async function callPrimaryNonStream(messages, tools) {
         return { data, provider: "openai" };
       }
       const errText = await res.text();
-      lastErrorMsg = `OpenAI ${res.status}: ${errText.slice(0, 200)}`;
-      console.warn(`[aiRouter] ${lastErrorMsg} — falling back`);
+      const msg = `OpenAI ${res.status}: ${errText.slice(0, 200)}`;
+      providerErrors.push(msg);
+      console.warn(`[aiRouter] ${msg} — falling back`);
     } catch (err) {
-      lastErrorMsg = `OpenAI non-stream error: ${err.message}`;
-      console.warn(`[aiRouter] ${lastErrorMsg} — falling back`);
+      const msg = `OpenAI non-stream error: ${err.message}`;
+      providerErrors.push(msg);
+      console.warn(`[aiRouter] ${msg} — falling back`);
     }
   }
 
-  throw new Error(`[aiRouter] No non-streaming LLM provider configured or succeeded. Last error: ${lastErrorMsg}`);
+  throw new Error(`[aiRouter] No non-streaming LLM provider configured or succeeded. Details: ${providerErrors.join(" | ")}`);
 }
 
 // ─── Public: image analysis ───────────────────────────────────────────────────
