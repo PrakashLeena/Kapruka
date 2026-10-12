@@ -152,15 +152,9 @@ function stripToolCallMarkup(text, isFinal = false) {
 
 const _providerStatus = getProviderStatus();
 if (_providerStatus.gemini) {
-  console.log(`✅ Primary LLM: Google Gemini (${process.env.GEMINI_MODEL || "gemini-3.5-flash-lite"})`);
-} else if (_providerStatus.tgi) {
-  console.log("✅ Primary LLM: TGI (fine-tuned Qwen3-14B)");
-} else if (_providerStatus.openai) {
-  console.log("ℹ️  Primary LLM: OpenAI GPT-4o");
-} else if (_providerStatus.qwen35) {
-  console.log("ℹ️  Primary LLM: NVIDIA Qwen 3.5");
+  console.log(`✅ AI Engine: Google Gemini (${process.env.GEMINI_MODEL || "gemini-3.5-flash-lite"})`);
 } else {
-  console.warn("WARNING: No LLM provider configured. Set GEMINI_API_KEY, TGI_ENDPOINT_URL, or OPENAI_API_KEY.");
+  console.warn("WARNING: GEMINI_API_KEY is not configured. Set GEMINI_API_KEY in .env or Vercel.");
 }
 if (!MONGODB_URI) {
   console.warn("WARNING: MONGODB_URI is not set. Chat history will not persist.");
@@ -1109,9 +1103,9 @@ async function* streamLLMCall(messages, tools) {
  *   { type: "error",    message: "..." } — fatal error
  */
 app.post("/chat/stream", async (req, res) => {
-  const { gemini: _streamGemini, tgi: _streamTgi, openai: _streamOpenai, qwen35: _streamQwen } = getProviderStatus();
-  if (!_streamGemini && !_streamTgi && !_streamOpenai && !_streamQwen) {
-    return res.status(500).json({ error: "No LLM provider configured on the server (set GEMINI_API_KEY, TGI_ENDPOINT_URL, or OPENAI_API_KEY)." });
+  const { gemini: _streamGemini } = getProviderStatus();
+  if (!_streamGemini) {
+    return res.status(500).json({ error: "GEMINI_API_KEY is not configured on the server." });
   }
 
   // ── SSE headers ────────────────────────────────────────────────────────────
@@ -1375,11 +1369,9 @@ app.post("/chat/stream", async (req, res) => {
  * SSE events: delta | products | done | error  (same schema as /chat/stream)
  */
 app.post("/chat/image-search", async (req, res) => {
-  // Image analysis uses Gemini Vision (primary) or GPT-4o Vision (fallback).
-  // At least one must be configured.
-  const { gemini: _imgGemini, openai: _imgOpenai } = getProviderStatus();
-  if (!_imgGemini && !_imgOpenai) {
-    return res.status(500).json({ error: "No image analysis provider configured (set GEMINI_API_KEY or OPENAI_API_KEY)." });
+  const { gemini: _imgGemini } = getProviderStatus();
+  if (!_imgGemini) {
+    return res.status(500).json({ error: "GEMINI_API_KEY is not configured on the server." });
   }
 
   // ── SSE headers ────────────────────────────────────────────────────────────
